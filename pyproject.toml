@@ -1,0 +1,23 @@
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "itchbook"
+version = "1.0.0"
+description = "NASDAQ TotalView-ITCH 5.0 parser and order book replay"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+api = ["fastapi", "uvicorn"]
+dev = ["pandas", "pytest"]
+
+[tool.scikit-build]
+# pip builds only the Python module: no CLI tests, so no GoogleTest download.
+cmake.build-type = "Release"
+cmake.define = { ITCHBOOK_PYTHON = "ON", ITCHBOOK_BUILD_TESTS = "OFF" }
+wheel.packages = ["python/itchbook"]
+# A fixed build directory lets repeat installs rebuild only what changed.
+build-dir = "build-py/{wheel_tag}"

@@ -17,6 +17,32 @@ namespace itchbook {
 inline constexpr std::uint64_t market_open = 34'200'000'000'000;
 inline constexpr std::uint64_t market_close = 57'600'000'000'000;
 
+// Fires at every whole multiple of an interval of exchange time. Call
+// advance() with each message's timestamp before the message is applied: it
+// calls on_tick(T) for each tick time T that the message has passed, so a tick
+// sees the book after every message stamped T or earlier and none after.
+// The first tick is the first whole interval at or after the first message,
+// and times after the last message get no tick.
+class Ticker {
+ public:
+  explicit Ticker(std::uint64_t interval) : interval_(interval) {}
+
+  template <typename OnTick>
+  void advance(std::uint64_t timestamp, OnTick&& on_tick) {
+    if (!next_) {
+      next_ = (timestamp + interval_ - 1) / interval_ * interval_;
+    }
+    while (timestamp > *next_) {
+      on_tick(*next_);
+      *next_ += interval_;
+    }
+  }
+
+ private:
+  std::uint64_t interval_;
+  std::optional<std::uint64_t> next_;  // set by the first message
+};
+
 // BookV1 plus checks from the outside. Counts every message, and after each
 // book message checks that stock's book. A locked or crossed book during
 // market hours counts as one "moment": normal continuous trading should never
@@ -82,9 +108,7 @@ class BookAt : public BookV1 {
 };
 
 // Replays the whole file and writes a CSV snapshot of a few stocks' top
-// levels at every whole interval of exchange time. A snapshot at time T shows
-// the book after every message stamped T or earlier. Times after the last
-// message get no snapshot.
+// levels at every tick of a Ticker.
 //
 // One row per time and stock:
 //   time,symbol,bid_price_1,bid_shares_1,...,ask_price_1,ask_shares_1,...
@@ -106,9 +130,39 @@ class GoldenWriter : public CheckedBook {
   std::ostream& out_;
   std::vector<std::string> symbols_;
   std::size_t depth_;
-  std::uint64_t interval_;
-  std::optional<std::uint64_t> next_;  // the next snapshot time, set by the first message
+  Ticker ticker_;
   std::uint64_t rows_ = 0;
+};
+
+// The best bid and ask at a series of times: entry i of every column belongs
+// to time[i]. An empty side has price 0 and 0 shares.
+struct TopOfBookColumns {
+  std::vector<std::uint64_t> time;
+  std::vector<std::uint32_t> bid_price;
+  std::vector<std::uint64_t> bid_shares;
+  std::vector<std::uint32_t> ask_price;
+  std::vector<std::uint64_t> ask_shares;
+
+  // Appends one row from the first level of each side of top.
+  void add(std::uint64_t t, const BookTop& top);
+};
+
+// Replays the whole file and samples one stock's best bid and ask at every
+// tick of a Ticker.
+class TopOfBookSeries : public BookV1 {
+ public:
+  TopOfBookSeries(std::string symbol, std::uint64_t interval);
+
+  void on_message(const MessageHeader& h) override;
+
+  std::optional<std::uint16_t> locate() const { return symbols().find(symbol_); }
+  const TopOfBookColumns& columns() const { return columns_; }
+
+ private:
+  std::string symbol_;
+  std::optional<std::uint16_t> locate_;  // cached once an R message names the symbol
+  Ticker ticker_;
+  TopOfBookColumns columns_;
 };
 
 }  // namespace itchbook

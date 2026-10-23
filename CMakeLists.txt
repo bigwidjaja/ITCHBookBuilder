@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ITCHBOOK_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(ITCHBOOK_BUILD_TESTS "Build the GoogleTest suite" ON)
+option(ITCHBOOK_PYTHON "Build the Python module (pip install . turns this on)" OFF)
 
 # The library holds the real code. Later front ends link this same target.
 add_library(itchbook_core STATIC
@@ -19,6 +21,9 @@ add_library(itchbook_core STATIC
   src/replay.cpp
 )
 target_include_directories(itchbook_core PUBLIC include)
+# The Python module is a shared library, and a static library linked into a
+# shared one must be compiled as position-independent code.
+set_target_properties(itchbook_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(ITCHBOOK_SANITIZE)
   # PUBLIC so the CLI and tests compile and link with the same sanitizers.
@@ -34,19 +39,38 @@ add_executable(itchbook
 target_link_libraries(itchbook PRIVATE itchbook_core)
 
 include(FetchContent)
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
-set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
 
-enable_testing()
-add_executable(itchbook_tests
-  tests/core_test.cpp
-)
-target_link_libraries(itchbook_tests PRIVATE itchbook_core GTest::gtest_main)
-include(GoogleTest)
-gtest_discover_tests(itchbook_tests)
+if(ITCHBOOK_BUILD_TESTS)
+  FetchContent_Declare(
+    googletest
+    URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+  set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(googletest)
+
+  enable_testing()
+  add_executable(itchbook_tests
+    tests/core_test.cpp
+  )
+  target_link_libraries(itchbook_tests PRIVATE itchbook_core GTest::gtest_main)
+  include(GoogleTest)
+  gtest_discover_tests(itchbook_tests)
+endif()
+
+if(ITCHBOOK_PYTHON)
+  # Development.Module is just the headers needed to build an extension module.
+  find_package(Python 3.9 REQUIRED COMPONENTS Interpreter Development.Module)
+  FetchContent_Declare(
+    pybind11
+    URL https://github.com/pybind/pybind11/archive/refs/tags/v2.13.6.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  FetchContent_MakeAvailable(pybind11)
+
+  # _itchbook is the compiled half of the itchbook package in python/itchbook.
+  pybind11_add_module(_itchbook python/src/bindings.cpp)
+  target_link_libraries(_itchbook PRIVATE itchbook_core)
+  install(TARGETS _itchbook LIBRARY DESTINATION itchbook)
+endif()

@@ -108,7 +108,7 @@ BookTop BookAt::result() const {
 
 GoldenWriter::GoldenWriter(std::ostream& out, std::vector<std::string> symbols, std::size_t depth,
                            std::uint64_t interval)
-    : out_(out), symbols_(std::move(symbols)), depth_(depth), interval_(interval) {
+    : out_(out), symbols_(std::move(symbols)), depth_(depth), ticker_(interval) {
   out_ << "time,symbol";
   for (const char* side : {"bid", "ask"}) {
     for (std::size_t i = 1; i <= depth_; ++i) {
@@ -119,16 +119,7 @@ GoldenWriter::GoldenWriter(std::ostream& out, std::vector<std::string> symbols, 
 }
 
 void GoldenWriter::on_message(const MessageHeader& h) {
-  if (!next_) {
-    // The first whole interval at or after the first message.
-    next_ = (h.timestamp + interval_ - 1) / interval_ * interval_;
-  }
-  // Every snapshot time this message has passed. The message itself is not
-  // applied yet, so the book is as it stood at each of those times.
-  while (h.timestamp > *next_) {
-    write_snapshot(*next_);
-    *next_ += interval_;
-  }
+  ticker_.advance(h.timestamp, [this](std::uint64_t time) { write_snapshot(time); });
   CheckedBook::on_message(h);
 }
 
@@ -151,6 +142,27 @@ void GoldenWriter::write_snapshot(std::uint64_t time) {
     out_ << '\n';
     ++rows_;
   }
+}
+
+void TopOfBookColumns::add(std::uint64_t t, const BookTop& top) {
+  time.push_back(t);
+  bid_price.push_back(top.bids.empty() ? 0 : top.bids[0].price);
+  bid_shares.push_back(top.bids.empty() ? 0 : top.bids[0].shares);
+  ask_price.push_back(top.asks.empty() ? 0 : top.asks[0].price);
+  ask_shares.push_back(top.asks.empty() ? 0 : top.asks[0].shares);
+}
+
+TopOfBookSeries::TopOfBookSeries(std::string symbol, std::uint64_t interval)
+    : symbol_(std::move(symbol)), ticker_(interval) {}
+
+void TopOfBookSeries::on_message(const MessageHeader& h) {
+  ticker_.advance(h.timestamp, [this](std::uint64_t time) {
+    // find() scans every symbol, so look the locate up once, not every tick.
+    if (!locate_) {
+      locate_ = locate();
+    }
+    columns_.add(time, locate_ ? top(*locate_, 1) : BookTop{});
+  });
 }
 
 }  // namespace itchbook

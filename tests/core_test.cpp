@@ -1062,6 +1062,35 @@ TEST(GoldenWriter, SnapshotsEveryInterval) {
   EXPECT_EQ(golden.rows(), 4u);
 }
 
+TEST(Ticker, FiresForEachTimeAMessagePasses) {
+  itchbook::Ticker ticker(10);
+  std::vector<std::uint64_t> ticks;
+  const auto record = [&](std::uint64_t t) { ticks.push_back(t); };
+
+  ticker.advance(15, record);  // first tick: the first multiple of 10 at or after 15
+  ticker.advance(20, record);  // stamped exactly at the tick: not past it yet
+  ticker.advance(45, record);  // passes 20, 30 and 40
+  EXPECT_EQ(ticks, (std::vector<std::uint64_t>{20, 30, 40}));
+}
+
+TEST(TopOfBookSeries, SamplesBestLevelEachTick) {
+  itchbook::TopOfBookSeries series("AAPL", 60'000'000'000);
+  feed(series, aapl_directory());                                // 09:30:00
+  feed(series, stamp(add(1, 'B', 10, 1'000'000, 13), 34'210));   // 09:30:10
+  feed(series, stamp(add(2, 'B', 5, 1'000'100, 13), 34'230));    // better bid
+  feed(series, stamp(add(3, 'S', 20, 1'010'000, 13), 34'270));   // 09:31:10
+  feed(series, stamp(remove(3), 34'330));                        // 09:32:10
+
+  const auto& c = series.columns();
+  EXPECT_EQ(c.time, (std::vector<std::uint64_t>{34'200'000'000'000, 34'260'000'000'000,
+                                                34'320'000'000'000}));
+  EXPECT_EQ(c.bid_price, (std::vector<std::uint32_t>{0, 1'000'100, 1'000'100}));
+  EXPECT_EQ(c.bid_shares, (std::vector<std::uint64_t>{0, 5, 5}));
+  EXPECT_EQ(c.ask_price, (std::vector<std::uint32_t>{0, 0, 1'010'000}));
+  EXPECT_EQ(c.ask_shares, (std::vector<std::uint64_t>{0, 0, 20}));
+  EXPECT_EQ(series.locate(), 13u);
+}
+
 TEST(Core, ReadMessagesStopsWhenCutOff) {
   const auto path = write_bytes("itchbook-read-messages-cutoff", {0x00, 0x04, 'A', 'B'});
   const auto messages = itchbook::read_messages(path);
