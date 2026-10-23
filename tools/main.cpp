@@ -60,6 +60,7 @@ int usage() {
             << "       itchbook count PATH\n"
             << "       itchbook dump PATH [--type T] [--limit N]\n"
             << "       itchbook stats PATH\n"
+            << "       itchbook parse PATH\n"
             << "       itchbook book PATH --symbol S --at HH:MM:SS [--depth N]\n"
             << "       itchbook book PATH [--golden OUT.csv]\n";
   return 1;
@@ -69,6 +70,26 @@ int usage() {
 bool parse_count(std::string_view value, std::uint64_t& out) {
   const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), out);
   return ec == std::errc{} && end == value.data() + value.size();
+}
+
+// Decodes every message and hands it to a handler that only counts: the cost
+// of reading and parsing on its own, without a book. Compare with `book` to
+// see the book's share.
+int parse_only(const std::filesystem::path& path) {
+  struct Counter : itchbook::Handler {
+    std::uint64_t messages = 0;
+    void on_message(const itchbook::MessageHeader&) override { ++messages; }
+  } handler;
+
+  const auto start = std::chrono::steady_clock::now();
+  itchbook::parse_file(path, handler);
+  const double seconds =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  std::cout << "messages: " << handler.messages << '\n';
+  std::cout << std::format("seconds: {:.3f}\n", seconds);
+  std::cout << std::format("msg_per_s: {:.0f}\n",
+                           seconds > 0 ? static_cast<double>(handler.messages) / seconds : 0);
+  return 0;
 }
 
 int stats_file(const std::filesystem::path& path) {
@@ -252,6 +273,9 @@ int main(int argc, char** argv) {
     }
     if (argc == 3 && std::strcmp(argv[1], "stats") == 0) {
       return stats_file(argv[2]);
+    }
+    if (argc == 3 && std::strcmp(argv[1], "parse") == 0) {
+      return parse_only(argv[2]);
     }
     if (argc == 3 && std::strcmp(argv[1], "count") == 0) {
       return count_file(argv[2]);

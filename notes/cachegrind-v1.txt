@@ -1,0 +1,165 @@
+# cachegrind, v1, full day: scripts/cachegrind.sh data/12302019.NASDAQ_ITCH50 book
+# Simulated cache: L1d 64 KiB 8-way, L1i 128 KiB 8-way, LL 16 MiB 16-way. Ubuntu 24.04 arm64 in Docker, -O2 -g.
+# Wall time under valgrind: 1110 s. Per-file and per-function summary only; the annotated source is omitted.
+
+messages: 268744780
+seconds: 1110.078
+msg_per_s: 242095
+errors: 0
+live orders at end: 0
+peak live orders: 1924078
+market hours locked moments: 70
+market hours crossed moments: 8371
+
+most locked or crossed:
+  symbol     locked  crossed  first               last              
+  MKD            23     5795  09:30:20.053839600  11:56:40.102560777
+  MBOT            0      782  14:15:41.222530315  14:20:41.222637459
+  ARDS           25      692  14:54:05.356527149  15:19:23.241420335
+  SLGL            4      543  10:05:57.018523125  10:10:57.018569871
+  QUIK            0      260  10:20:39.049589522  10:25:39.050484986
+  PNRL            0      113  09:30:01.538619358  15:56:57.035004941
+  WKEY            8       93  09:53:37.199477356  10:53:33.333154154
+  YI              0       30  14:21:47.008680244  14:26:47.005347201
+  IPDN            0       21  09:30:01.444909917  15:55:54.308188696
+  DNJR            0       17  09:30:01.625703536  15:55:58.804314037
+==4381== I refs:        290,473,176,558
+==4381== I1  misses:              2,393
+==4381== LLi misses:              2,389
+==4381== I1  miss rate:            0.00%
+==4381== LLi miss rate:            0.00%
+==4381== D refs:        141,451,323,008  (94,957,995,881 rd   + 46,493,327,127 wr)
+==4381== D1  misses:      2,694,342,310  ( 2,609,613,912 rd   +     84,728,398 wr)
+==4381== LLd misses:        558,755,744  (   537,518,586 rd   +     21,237,158 wr)
+==4381== D1  miss rate:             1.9% (           2.7%     +            0.2%  )
+==4381== LLd miss rate:             0.4% (           0.6%     +            0.0%  )
+==4381== LL refs:         2,694,344,703  ( 2,609,616,305 rd   +     84,728,398 wr)
+==4381== LL misses:         558,758,133  (   537,520,975 rd   +     21,237,158 wr)
+==4381== LL miss rate:              0.1% (           0.1%     +            0.0%  )
+
+--- functions by last-level data misses (DLmr: reads, DLmw: writes)
+--------------------------------------------------------------------------------
+-- Metadata
+--------------------------------------------------------------------------------
+Invocation:       /usr/bin/cg_annotate /tmp/cg.out --show=Ir,D1mr,DLmr,DLmw --sort=DLmr
+I1 cache:         131072 B, 64 B, 8-way associative
+D1 cache:         65536 B, 64 B, 8-way associative
+LL cache:         16777216 B, 64 B, 16-way associative
+Command:          /tmp/b/itchbook book /data/12302019.NASDAQ_ITCH50
+Events recorded:  Ir I1mr ILmr Dr D1mr DLmr Dw D1mw DLmw
+Events shown:     Ir D1mr DLmr DLmw
+Event sort order: DLmr
+Threshold:        0.1%
+Annotation:       on
+
+--------------------------------------------------------------------------------
+-- Summary
+--------------------------------------------------------------------------------
+Ir______________________ D1mr__________________ DLmr________________ DLmw_______________ 
+
+290,473,176,558 (100.0%) 2,609,613,912 (100.0%) 537,518,586 (100.0%) 21,237,158 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+-- File:function summary
+--------------------------------------------------------------------------------
+  Ir____________________________ D1mr________________________ DLmr_______________________ DLmw_____________________  file:function
+
+<  14,570,079,015  (5.0%,  5.0%)   565,001,525 (21.7%, 21.7%) 203,736,055 (37.9%,  37.9%) 14,027,546 (66.1%, 66.1%)  /usr/include/c++/13/bits/hashtable.h:
+    4,305,019,539  (1.5%)          161,111,425  (6.2%)        140,268,387 (26.1%)                  3  (0.0%)           itchbook::BookV1::add_order(unsigned long, itchbook::BookV1::Order const&)
+    1,164,558,160  (0.4%)          230,334,405  (8.8%)         59,563,391 (11.1%)                  0                   std::_Hashtable<unsigned long, std::pair<unsigned long const, itchbook::BookV1::Order>, std::allocator<std::pair<unsigned long const, itchbook::BookV1::Order> >, std::__detail::_Select1st, std::equal_to<unsigned long>, std::hash<unsigned long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::find(unsigned long const&) [clone .isra.0]
+    2,002,527,457  (0.7%)          170,588,200  (6.5%)          2,517,339  (0.5%)                  1  (0.0%)           std::__detail::_Map_base<unsigned short, std::pair<unsigned short const, itchbook::BookV1::Book>, std::allocator<std::pair<unsigned short const, itchbook::BookV1::Book> >, std::__detail::_Select1st, std::equal_to<unsigned short>, std::hash<unsigned short>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true>, true>::operator[](unsigned short const&)
+       29,334,060  (0.0%)            2,948,026  (0.1%)          1,386,185  (0.3%)                  0                   std::_Hashtable<unsigned long, std::pair<unsigned long const, itchbook::BookV1::Order>, std::allocator<std::pair<unsigned long const, itchbook::BookV1::Order> >, std::__detail::_Select1st, std::equal_to<unsigned long>, std::hash<unsigned long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::_M_rehash(unsigned long, unsigned long const&)
+
+<  17,601,676,335  (6.1%, 11.1%) 1,116,437,895 (42.8%, 64.4%) 102,683,792 (19.1%,  57.0%)          0  (0.0%, 66.1%)  /usr/include/c++/13/bits/stl_tree.h:
+    8,430,633,736  (2.9%)          663,701,466 (25.4%)         68,597,636 (12.8%)                  0                   itchbook::BookV1::remove_from_level(itchbook::BookV1::Order const&, unsigned int)
+    8,403,833,120  (2.9%)          452,725,396 (17.3%)         34,079,429  (6.3%)                  0                   itchbook::BookV1::add_order(unsigned long, itchbook::BookV1::Order const&)
+
+<  13,147,770,775  (4.5%, 15.6%)   187,671,200  (7.2%, 71.6%)  93,453,520 (17.4%,  74.4%)      2,225  (0.0%, 66.1%)  /usr/include/c++/13/bits/hashtable_policy.h:
+    1,137,191,888  (0.4%)           72,565,077  (2.8%)         61,348,134 (11.4%)                  0                   itchbook::BookV1::add_order(unsigned long, itchbook::BookV1::Order const&)
+      981,893,598  (0.3%)          111,001,619  (4.3%)         29,071,785  (5.4%)                  0                   std::_Hashtable<unsigned long, std::pair<unsigned long const, itchbook::BookV1::Order>, std::allocator<std::pair<unsigned long const, itchbook::BookV1::Order> >, std::__detail::_Select1st, std::equal_to<unsigned long>, std::hash<unsigned long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::erase(std::__detail::_Node_const_iterator<std::pair<unsigned long const, itchbook::BookV1::Order>, false, false>)
+       14,258,659  (0.0%)            2,760,997  (0.1%)          2,312,953  (0.4%)                  0                   std::_Hashtable<unsigned long, std::pair<unsigned long const, itchbook::BookV1::Order>, std::allocator<std::pair<unsigned long const, itchbook::BookV1::Order> >, std::__detail::_Select1st, std::equal_to<unsigned long>, std::hash<unsigned long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::_M_rehash(unsigned long, unsigned long const&)
+      584,837,184  (0.2%)            1,164,376  (0.0%)            718,018  (0.1%)                  0                   std::_Hashtable<unsigned long, std::pair<unsigned long const, itchbook::BookV1::Order>, std::allocator<std::pair<unsigned long const, itchbook::BookV1::Order> >, std::__detail::_Select1st, std::equal_to<unsigned long>, std::hash<unsigned long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::find(unsigned long const&) [clone .isra.0]
+
+<   1,142,593,465  (0.4%, 16.0%)   257,075,362  (9.9%, 81.5%)  78,687,425 (14.6%,  89.0%)          0  (0.0%, 66.1%)  /usr/include/c++/13/bits/stl_function.h:
+      458,049,929  (0.2%)           56,078,925  (2.1%)         47,482,824  (8.8%)                  0                   itchbook::BookV1::add_order(unsigned long, itchbook::BookV1::Order const&)
+      144,610,481  (0.0%)          113,792,918  (4.4%)         28,876,922  (5.4%)                  0                   std::_Hashtable<unsigned long, std::pair<unsigned long const, itchbook::BookV1::Order>, std::allocator<std::pair<unsigned long const, itchbook::BookV1::Order> >, std::__detail::_Select1st, std::equal_to<unsigned long>, std::hash<unsigned long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::find(unsigned long const&) [clone .isra.0]
+      284,874,249  (0.1%)           87,197,988  (3.3%)          2,327,404  (0.4%)                  0                   std::__detail::_Map_base<unsigned short, std::pair<unsigned short const, itchbook::BookV1::Book>, std::allocator<std::pair<unsigned short const, itchbook::BookV1::Book> >, std::__detail::_Select1st, std::equal_to<unsigned short>, std::hash<unsigned short>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true>, true>::operator[](unsigned short const&)
+
+<  29,862,734,673 (10.3%, 26.3%)    87,242,198  (3.3%, 84.8%)  25,993,748  (4.8%,  93.9%)  2,251,576 (10.6%, 76.7%)  ./malloc/./malloc/malloc.c:
+    6,260,797,420  (2.2%)           39,619,273  (1.5%)         12,379,038  (2.3%)                  7  (0.0%)           free
+   11,775,675,015  (4.1%)            9,606,091  (0.4%)          5,516,489  (1.0%)                 33  (0.0%)           _int_free
+      124,211,693  (0.0%)            7,453,179  (0.3%)          5,160,029  (1.0%)             27,426  (0.1%)           malloc_consolidate
+       55,455,851  (0.0%)            4,725,583  (0.2%)          2,100,232  (0.4%)                  2  (0.0%)           unlink_chunk.isra.0
+    1,648,041,415  (0.6%)           19,223,690  (0.7%)            837,106  (0.2%)          2,223,794 (10.5%)           _int_malloc
+
+< 101,814,591,066 (35.1%, 61.3%)    63,586,890  (2.4%, 87.3%)  16,521,489  (3.1%,  96.9%)  3,598,817 (16.9%, 93.6%)  ???:
+    1,649,892,068  (0.6%)           34,747,296  (1.3%)         10,223,111  (1.9%)          1,536,102  (7.2%)           std::_Rb_tree_rebalance_for_erase(std::_Rb_tree_node_base*, std::_Rb_tree_node_base&)
+    1,442,552,489  (0.5%)           12,153,793  (0.5%)          3,560,972  (0.7%)          2,062,576  (9.7%)           std::_Rb_tree_insert_and_rebalance(bool, std::_Rb_tree_node_base*, std::_Rb_tree_node_base*, std::_Rb_tree_node_base&)
+      385,451,146  (0.1%)            8,325,111  (0.3%)          2,734,515  (0.5%)                  0                   std::_Rb_tree_decrement(std::_Rb_tree_node_base*)
+
+<  18,484,284,704  (6.4%, 67.7%)   205,383,489  (7.9%, 95.1%)  16,426,911  (3.1%, 100.0%)          0  (0.0%, 93.6%)  /src/src/book_v1.cpp:
+    4,590,906,598  (1.6%)          175,327,000  (6.7%)          7,353,679  (1.4%)                  0                   itchbook::BookV1::state(unsigned short) const
+    1,372,331,964  (0.5%)           23,993,836  (0.9%)          7,079,668  (1.3%)                  0                   itchbook::BookV1::on_delete(itchbook::OrderDelete const&)
+      952,118,948  (0.3%)            4,439,414  (0.2%)          1,334,062  (0.2%)                  0                   itchbook::BookV1::on_replace(itchbook::OrderReplace const&)
+      202,379,549  (0.1%)            1,623,225  (0.1%)            659,496  (0.1%)                  0                   itchbook::BookV1::reduce_order(unsigned long, unsigned int)
+
+--------------------------------------------------------------------------------
+-- Function:file summary
+--------------------------------------------------------------------------------
+  Ir__________________________ D1mr______________________ DLmr_______________________ DLmw_____________________  function:file
+
+> 22,947,647,883 (7.9%,  7.9%) 742,480,881 (28.5%, 28.5%) 283,178,812 (52.7%,  52.7%)    247,020  (1.2%,  1.2%)  itchbook::BookV1::add_order(unsigned long, itchbook::BookV1::Order const&):
+   4,305,019,539 (1.5%)        161,111,425  (6.2%)        140,268,387 (26.1%)                  3  (0.0%)           /usr/include/c++/13/bits/hashtable.h
+   1,137,191,888 (0.4%)         72,565,077  (2.8%)         61,348,134 (11.4%)                  0                   /usr/include/c++/13/bits/hashtable_policy.h
+     458,049,929 (0.2%)         56,078,925  (2.1%)         47,482,824  (8.8%)                  0                   /usr/include/c++/13/bits/stl_function.h
+   8,403,833,120 (2.9%)        452,725,396 (17.3%)         34,079,429  (6.3%)                  0                   /usr/include/c++/13/bits/stl_tree.h
+
+>  1,894,005,825 (0.7%,  8.6%) 345,291,699 (13.2%, 41.7%)  89,158,331 (16.6%,  69.3%)          0  (0.0%,  1.2%)  std::_Hashtable<unsigned long, std::pair<unsigned long const, itchbook::BookV1::Order>, std::allocator<std::pair<unsigned long const, itchbook::BookV1::Order> >, std::__detail::_Select1st, std::equal_to<unsigned long>, std::hash<unsigned long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::find(unsigned long const&) [clone .isra.0]:
+   1,164,558,160 (0.4%)        230,334,405  (8.8%)         59,563,391 (11.1%)                  0                   /usr/include/c++/13/bits/hashtable.h
+     144,610,481 (0.0%)        113,792,918  (4.4%)         28,876,922  (5.4%)                  0                   /usr/include/c++/13/bits/stl_function.h
+     584,837,184 (0.2%)          1,164,376  (0.0%)            718,018  (0.1%)                  0                   /usr/include/c++/13/bits/hashtable_policy.h
+
+> 11,772,568,567 (4.1%, 12.6%) 663,701,466 (25.4%, 67.1%)  68,597,636 (12.8%,  82.0%)          0  (0.0%,  1.2%)  itchbook::BookV1::remove_from_level(itchbook::BookV1::Order const&, unsigned int):
+   8,430,633,736 (2.9%)        663,701,466 (25.4%)         68,597,636 (12.8%)                  0                   /usr/include/c++/13/bits/stl_tree.h
+
+>  5,614,629,763 (1.9%, 14.5%) 111,001,619  (4.3%, 71.4%)  29,071,785  (5.4%,  87.4%) 14,027,541 (66.1%, 67.2%)  std::_Hashtable<unsigned long, std::pair<unsigned long const, itchbook::BookV1::Order>, std::allocator<std::pair<unsigned long const, itchbook::BookV1::Order> >, std::__detail::_Select1st, std::equal_to<unsigned long>, std::hash<unsigned long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::erase(std::__detail::_Node_const_iterator<std::pair<unsigned long const, itchbook::BookV1::Order>, false, false>):
+     981,893,598 (0.3%)        111,001,619  (4.3%)         29,071,785  (5.4%)                  0                   /usr/include/c++/13/bits/hashtable_policy.h
+
+>  6,997,361,776 (2.4%, 16.9%)  39,619,273  (1.5%, 72.9%)  12,379,038  (2.3%,  89.7%)          7  (0.0%, 67.2%)  free:
+   6,260,797,420 (2.2%)         39,619,273  (1.5%)         12,379,038  (2.3%)                  7  (0.0%)           ./malloc/./malloc/malloc.c
+
+>  1,649,892,068 (0.6%, 17.5%)  34,747,296  (1.3%, 74.2%)  10,223,111  (1.9%,  91.6%)  1,536,102  (7.2%, 74.4%)  std::_Rb_tree_rebalance_for_erase(std::_Rb_tree_node_base*, std::_Rb_tree_node_base&):???
+
+>  5,866,158,473 (2.0%, 19.5%) 175,327,000  (6.7%, 80.9%)   7,353,679  (1.4%,  93.0%)          0  (0.0%, 74.4%)  itchbook::BookV1::state(unsigned short) const:
+   4,590,906,598 (1.6%)        175,327,000  (6.7%)          7,353,679  (1.4%)                  0                   /src/src/book_v1.cpp
+
+>  2,172,858,943 (0.7%, 20.3%)  23,993,836  (0.9%, 81.9%)   7,079,668  (1.3%,  94.3%)          0  (0.0%, 74.4%)  itchbook::BookV1::on_delete(itchbook::OrderDelete const&):
+   1,372,331,964 (0.5%)         23,993,836  (0.9%)          7,079,668  (1.3%)                  0                   /src/src/book_v1.cpp
+
+> 11,775,675,015 (4.1%, 24.3%)   9,606,091  (0.4%, 82.2%)   5,516,489  (1.0%,  95.4%)         33  (0.0%, 74.4%)  _int_free:./malloc/./malloc/malloc.c
+
+>    124,211,693 (0.0%, 24.4%)   7,453,179  (0.3%, 82.5%)   5,160,029  (1.0%,  96.3%)     27,426  (0.1%, 74.6%)  malloc_consolidate:./malloc/./malloc/malloc.c
+
+> 11,696,833,112 (4.0%, 28.4%) 257,957,247  (9.9%, 92.4%)   4,844,779  (0.9%,  97.2%)      8,216  (0.0%, 74.6%)  std::__detail::_Map_base<unsigned short, std::pair<unsigned short const, itchbook::BookV1::Book>, std::allocator<std::pair<unsigned short const, itchbook::BookV1::Book> >, std::__detail::_Select1st, std::equal_to<unsigned short>, std::hash<unsigned short>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true>, true>::operator[](unsigned short const&):
+   2,002,527,457 (0.7%)        170,588,200  (6.5%)          2,517,339  (0.5%)                  1  (0.0%)           /usr/include/c++/13/bits/hashtable.h
+     284,874,249 (0.1%)         87,197,988  (3.3%)          2,327,404  (0.4%)                  0                   /usr/include/c++/13/bits/stl_function.h
+
+>     43,592,897 (0.0%, 28.4%)   5,709,023  (0.2%, 92.6%)   3,699,138  (0.7%,  97.9%)          0  (0.0%, 74.6%)  std::_Hashtable<unsigned long, std::pair<unsigned long const, itchbook::BookV1::Order>, std::allocator<std::pair<unsigned long const, itchbook::BookV1::Order> >, std::__detail::_Select1st, std::equal_to<unsigned long>, std::hash<unsigned long>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::_M_rehash(unsigned long, unsigned long const&):
+      14,258,659 (0.0%)          2,760,997  (0.1%)          2,312,953  (0.4%)                  0                   /usr/include/c++/13/bits/hashtable_policy.h
+      29,334,060 (0.0%)          2,948,026  (0.1%)          1,386,185  (0.3%)                  0                   /usr/include/c++/13/bits/hashtable.h
+
+>  1,442,552,489 (0.5%, 28.9%)  12,153,793  (0.5%, 93.1%)   3,560,972  (0.7%,  98.6%)  2,062,576  (9.7%, 84.3%)  std::_Rb_tree_insert_and_rebalance(bool, std::_Rb_tree_node_base*, std::_Rb_tree_node_base*, std::_Rb_tree_node_base&):???
+
+>    385,451,146 (0.1%, 29.1%)   8,325,111  (0.3%, 93.4%)   2,734,515  (0.5%,  99.1%)          0  (0.0%, 84.3%)  std::_Rb_tree_decrement(std::_Rb_tree_node_base*):???
+
+>     55,455,851 (0.0%, 29.1%)   4,725,583  (0.2%, 93.6%)   2,100,232  (0.4%,  99.5%)          2  (0.0%, 84.3%)  unlink_chunk.isra.0:./malloc/./malloc/malloc.c
+
+>  1,103,592,417 (0.4%, 29.4%)   4,439,414  (0.2%, 93.8%)   1,334,062  (0.2%,  99.7%)          0  (0.0%, 84.3%)  itchbook::BookV1::on_replace(itchbook::OrderReplace const&):
+     952,118,948 (0.3%)          4,439,414  (0.2%)          1,334,062  (0.2%)                  0                   /src/src/book_v1.cpp
+
+>  1,648,041,415 (0.6%, 30.0%)  19,223,690  (0.7%, 94.5%)     837,106  (0.2%,  99.9%)  2,223,794 (10.5%, 94.8%)  _int_malloc:./malloc/./malloc/malloc.c
+
+>    241,022,177 (0.1%, 30.1%)   1,623,225  (0.1%, 94.5%)     659,496  (0.1%, 100.0%)          0  (0.0%, 94.8%)  itchbook::BookV1::reduce_order(unsigned long, unsigned int):
+     202,379,549 (0.1%)          1,623,225  (0.1%)            659,496  (0.1%)                  0                   /src/src/book_v1.cpp
+
+--------------------------------------------------------------------------------
