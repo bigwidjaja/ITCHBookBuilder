@@ -1,3 +1,9 @@
 data/
 build/
 build-rel/
+build-asan/
+.venv/
+build-py/
+build-prof/
+__pycache__/
+.pytest_cache/

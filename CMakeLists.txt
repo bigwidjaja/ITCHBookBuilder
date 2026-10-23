@@ -1,0 +1,52 @@
+cmake_minimum_required(VERSION 3.20)
+project(itchbook LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(ITCHBOOK_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+# The library holds the real code. Later front ends link this same target.
+add_library(itchbook_core STATIC
+  src/core.cpp
+  src/messages.cpp
+  src/format.cpp
+  src/dump.cpp
+  src/symbols.cpp
+  src/stats.cpp
+  src/book_v1.cpp
+  src/replay.cpp
+)
+target_include_directories(itchbook_core PUBLIC include)
+
+if(ITCHBOOK_SANITIZE)
+  # PUBLIC so the CLI and tests compile and link with the same sanitizers.
+  target_compile_options(itchbook_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(itchbook_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+endif()
+
+# The CLI is a thin executable. PRIVATE means only itchbook uses the library
+# this way; the library does not re-export that link to anyone else.
+add_executable(itchbook
+  tools/main.cpp
+)
+target_link_libraries(itchbook PRIVATE itchbook_core)
+
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+add_executable(itchbook_tests
+  tests/core_test.cpp
+)
+target_link_libraries(itchbook_tests PRIVATE itchbook_core GTest::gtest_main)
+include(GoogleTest)
+gtest_discover_tests(itchbook_tests)
