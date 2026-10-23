@@ -9,10 +9,11 @@ day are "HH:MM:SS" strings or nanoseconds since midnight, and an empty side of
 the book has price NaN and 0 shares.
 """
 
-from ._itchbook import Book, replay, replay_with_callback, top_of_book_series
+from ._itchbook import Book, SnapshotIndex, replay, replay_with_callback, top_of_book_series
 
 __all__ = [
     "Book",
+    "SnapshotIndex",
     "replay",
     "replay_with_callback",
     "top_of_book_frame",

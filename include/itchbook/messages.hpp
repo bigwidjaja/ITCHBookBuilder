@@ -3,7 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string_view>
+#include <vector>
 
 namespace itchbook {
 
@@ -146,6 +148,32 @@ class Handler {
 // type's own function if it is one we decode. Returns true if that second
 // call happened. A length that does not match the spec calls nothing.
 bool parse_message(const std::uint8_t* p, std::size_t length, Handler& h);
+
+// Reads length-prefixed messages one at a time, starting at any message
+// boundary. offset() says where the current message starts, so a later
+// reader can resume at exactly that message.
+class MessageReader {
+ public:
+  // Throws std::filesystem::filesystem_error if path cannot be opened.
+  explicit MessageReader(const std::filesystem::path& path, std::uint64_t offset = 0);
+
+  // Reads the next complete message. Returns false at the end of the file or
+  // at a message cut off by it.
+  bool next();
+
+  // The current message, without its length prefix: data()[0] is the type.
+  const std::uint8_t* data() const { return buf_.data(); }
+  std::size_t size() const { return buf_.size(); }
+
+  // Byte offset of the current message's 2-byte length prefix.
+  std::uint64_t offset() const { return offset_; }
+
+ private:
+  std::ifstream f_;
+  std::vector<std::uint8_t> buf_;
+  std::uint64_t offset_ = 0;  // the current message
+  std::uint64_t next_ = 0;    // the message after it
+};
 
 // Walks every message in an ITCH file and passes each one to parse_message.
 // Stops at the end of the file, at a message cut off by the end of the file,

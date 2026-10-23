@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(ITCHBOOK_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(ITCHBOOK_BUILD_TESTS "Build the GoogleTest suite" ON)
 option(ITCHBOOK_PYTHON "Build the Python module (pip install . turns this on)" OFF)
+option(ITCHBOOK_BUILD_BENCH "Build the Google Benchmark microbenchmarks" OFF)
 
 # The library holds the real code. Later front ends link this same target.
 add_library(itchbook_core STATIC
@@ -19,6 +20,7 @@ add_library(itchbook_core STATIC
   src/stats.cpp
   src/book_v1.cpp
   src/replay.cpp
+  src/snapshot.cpp
 )
 target_include_directories(itchbook_core PUBLIC include)
 # The Python module is a shared library, and a static library linked into a
@@ -57,6 +59,21 @@ if(ITCHBOOK_BUILD_TESTS)
   target_link_libraries(itchbook_tests PRIVATE itchbook_core GTest::gtest_main)
   include(GoogleTest)
   gtest_discover_tests(itchbook_tests)
+endif()
+
+if(ITCHBOOK_BUILD_BENCH)
+  FetchContent_Declare(
+    googlebenchmark
+    URL https://github.com/google/benchmark/archive/refs/tags/v1.9.1.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(googlebenchmark)
+
+  add_executable(itchbook_bench bench/book_bench.cpp)
+  target_link_libraries(itchbook_bench PRIVATE itchbook_core benchmark::benchmark)
 endif()
 
 if(ITCHBOOK_PYTHON)

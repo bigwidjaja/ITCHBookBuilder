@@ -6,6 +6,7 @@
 #include "itchbook/format.hpp"
 #include "itchbook/messages.hpp"
 #include "itchbook/replay.hpp"
+#include "itchbook/snapshot.hpp"
 
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
@@ -16,6 +17,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -179,6 +182,86 @@ PYBIND11_MODULE(_itchbook, m) {
       "Replays the whole file and samples symbol's best bid and ask every interval seconds.\n"
       "Returns a dict of NumPy arrays: time (ns since midnight), bid_price, bid_shares,\n"
       "ask_price, ask_shares. A sample at time T includes every message stamped T or earlier.");
+
+  py::class_<itchbook::SnapshotIndex>(
+      m, "SnapshotIndex",
+      "Answers book queries without replaying from the start of the day.\n"
+      "Built by one replay that saves each symbol's book every interval seconds of\n"
+      "exchange time; interval 0 saves none, so every query replays from the start.")
+      .def(py::init([](const std::filesystem::path& path, const std::vector<std::string>& symbols,
+                       double interval) {
+             if (interval < 0) {
+               throw py::value_error("interval must be 0 or a positive number of seconds");
+             }
+             const std::uint64_t ns = interval == 0 ? 0 : interval_arg(interval);
+             py::gil_scoped_release release;
+             return std::make_unique<itchbook::SnapshotIndex>(path, symbols, ns);
+           }),
+           py::arg("path"), py::arg("symbols"), py::arg("interval"))
+      .def("symbols", &itchbook::SnapshotIndex::symbols,
+           "The requested symbols that the file names, in the order given.")
+      .def(
+          "book",
+          [](const itchbook::SnapshotIndex& index, const std::string& symbol,
+             const std::string& at, std::size_t depth) {
+            const std::uint64_t time = parse_time_arg(at);
+            std::optional<itchbook::BookTop> top;
+            {
+              py::gil_scoped_release release;
+              top = index.book(symbol, time, depth);
+            }
+            if (!top) {
+              throw py::key_error(symbol + " is not indexed");
+            }
+            return py::make_tuple(levels_to_list(top->bids, depth),
+                                  levels_to_list(top->asks, depth));
+          },
+          py::arg("symbol"), py::arg("at"), py::arg("depth") = 5,
+          "Returns (bids, asks) at time at, like Book.top. KeyError if symbol is not indexed.")
+      .def(
+          "bbo",
+          [](const itchbook::SnapshotIndex& index, const std::string& symbol,
+             const std::string& start, const std::string& end, double interval) {
+            const std::uint64_t from = parse_time_arg(start);
+            const std::uint64_t to = parse_time_arg(end);
+            const std::uint64_t step = interval_arg(interval);
+            std::optional<itchbook::TopOfBookColumns> columns;
+            {
+              py::gil_scoped_release release;
+              columns = index.bbo(symbol, from, to, step);
+            }
+            if (!columns) {
+              throw py::key_error(symbol + " is not indexed");
+            }
+            py::dict out = columns_to_dict(*columns);
+            py::list clock;
+            for (const std::uint64_t t : columns->time) {
+              clock.append(itchbook::format_timestamp(t));
+            }
+            out["clock"] = clock;
+            return out;
+          },
+          py::arg("symbol"), py::arg("start"), py::arg("end"), py::arg("interval"),
+          "Best bid and ask every interval seconds from start to end, like\n"
+          "top_of_book_series, plus clock: each time as HH:MM:SS.nnnnnnnnn.")
+      .def("stats", [](const itchbook::SnapshotIndex& index) {
+        const auto& s = index.stats();
+        py::dict by_type;
+        for (std::size_t type = 0; type < s.by_type.size(); ++type) {
+          if (s.by_type[type] != 0) {
+            by_type[py::str(std::string(1, static_cast<char>(type)))] = s.by_type[type];
+          }
+        }
+        py::dict out;
+        out["messages"] = s.messages;
+        out["by_type"] = by_type;
+        out["symbols"] = index.symbols();
+        out["interval_seconds"] = s.interval / 1e9;
+        out["snapshots"] = s.snapshots;
+        out["snapshot_bytes"] = s.snapshot_bytes;
+        out["build_seconds"] = s.build_seconds;
+        return out;
+      });
 
   m.def(
       "replay_with_callback",

@@ -137,6 +137,14 @@ BookTop BookV1::top(std::uint16_t locate, std::size_t depth) const {
   return {first_levels(it->second.bids, depth), first_levels(it->second.asks, depth)};
 }
 
+std::size_t BookV1::level_count() const {
+  std::size_t levels = 0;
+  for (const auto& [locate, book] : books_) {
+    levels += book.bids.size() + book.asks.size();
+  }
+  return levels;
+}
+
 BookState BookV1::state(std::uint16_t locate) const {
   const auto it = books_.find(locate);
   if (it == books_.end() || it->second.bids.empty() || it->second.asks.empty()) {

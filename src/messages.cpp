@@ -144,20 +144,32 @@ bool parse_message(const std::uint8_t* p, std::size_t length, Handler& h) {
   }
 }
 
-void parse_file(const std::filesystem::path& path, Handler& h) {
-  // The same walk as count_messages: 2-byte length, then that many bytes.
-  std::ifstream f = open_binary(path);
-  std::vector<std::uint8_t> buf;
-  std::uint8_t b[2];
+MessageReader::MessageReader(const std::filesystem::path& path, std::uint64_t offset)
+    : f_(open_binary(path)), offset_(offset), next_(offset) {
+  f_.seekg(static_cast<std::streamoff>(offset));
+}
 
-  while (!h.done() && f.read(reinterpret_cast<char*>(b), 2)) {
-    const std::uint16_t length = load_be16(b);
-    buf.resize(length);
-    if (length > 0 &&
-        !f.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(length))) {
-      break;
-    }
-    parse_message(buf.data(), length, h);
+bool MessageReader::next() {
+  // The same walk as count_messages: 2-byte length, then that many bytes.
+  std::uint8_t b[2];
+  if (!f_.read(reinterpret_cast<char*>(b), 2)) {
+    return false;
+  }
+  const std::uint16_t length = load_be16(b);
+  buf_.resize(length);
+  if (length > 0 &&
+      !f_.read(reinterpret_cast<char*>(buf_.data()), static_cast<std::streamsize>(length))) {
+    return false;
+  }
+  offset_ = next_;
+  next_ += 2 + length;
+  return true;
+}
+
+void parse_file(const std::filesystem::path& path, Handler& h) {
+  MessageReader reader(path);
+  while (!h.done() && reader.next()) {
+    parse_message(reader.data(), reader.size(), h);
   }
 }
 

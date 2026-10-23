@@ -7,13 +7,13 @@ or the CLI build is missing.
 
 import csv
 import math
-import struct
 import subprocess
 from pathlib import Path
 
 import pytest
 
 import itchbook
+from itchfile import ns, tiny_day
 
 ROOT = Path(__file__).resolve().parents[2]
 SMALL = ROOT / "data" / "small.itch"
@@ -22,49 +22,9 @@ CLI = ROOT / "build-rel" / "itchbook"
 GOLDEN = ROOT / "tests" / "golden" / "golden-v1.csv"
 
 
-def ns(hhmmss):
-    h, m, s = (int(x) for x in hhmmss.split(":"))
-    return ((h * 60 + m) * 60 + s) * 1_000_000_000
-
-
-def header(kind, locate, at):
-    # type, stock locate, tracking number, 6-byte timestamp
-    return kind.encode() + struct.pack(">HH", locate, 0) + ns(at).to_bytes(6, "big")
-
-
-def stock_directory(locate, symbol, at):
-    body = symbol.ljust(8).encode() + b"QN" + struct.pack(">I", 100) + b"NCZ PN 1N" + bytes(4) + b"N"
-    return header("R", locate, at) + body
-
-
-def add(locate, ref, side, shares, price, symbol, at):
-    body = struct.pack(">QcI", ref, side.encode(), shares) + symbol.ljust(8).encode()
-    return header("A", locate, at) + body + struct.pack(">I", price)
-
-
-def delete(locate, ref, at):
-    return header("D", locate, at) + struct.pack(">Q", ref)
-
-
-def write_itch(path, messages):
-    with open(path, "wb") as f:
-        for m in messages:
-            f.write(struct.pack(">H", len(m)) + m)
-    return path
-
-
 @pytest.fixture
 def tiny(tmp_path):
-    return write_itch(
-        tmp_path / "tiny.itch",
-        [
-            stock_directory(1, "AAPL", "09:00:00"),
-            add(1, 1, "B", 100, 1_000_000, "AAPL", "09:30:00"),
-            add(1, 2, "S", 50, 1_010_000, "AAPL", "09:31:00"),
-            add(1, 3, "B", 10, 1_005_000, "AAPL", "09:32:00"),
-            delete(1, 1, "09:33:00"),
-        ],
-    )
+    return tiny_day(tmp_path / "tiny.itch")
 
 
 def test_replay_stops_at_time(tiny):

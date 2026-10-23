@@ -58,6 +58,9 @@ class BookV1 : public Handler {
 
   std::size_t order_count() const { return orders_.size(); }
 
+  // Price levels across every stock and both sides.
+  std::size_t level_count() const;
+
   // The most orders that were live at once.
   std::size_t peak_order_count() const { return peak_order_count_; }
 

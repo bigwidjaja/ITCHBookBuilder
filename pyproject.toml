@@ -12,7 +12,7 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 api = ["fastapi", "uvicorn"]
-dev = ["pandas", "pytest"]
+dev = ["pandas", "pytest", "httpx"]
 
 [tool.scikit-build]
 # pip builds only the Python module: no CLI tests, so no GoogleTest download.

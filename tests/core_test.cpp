@@ -4,6 +4,7 @@
 #include "itchbook/format.hpp"
 #include "itchbook/messages.hpp"
 #include "itchbook/replay.hpp"
+#include "itchbook/snapshot.hpp"
 #include "itchbook/stats.hpp"
 #include "itchbook/symbols.hpp"
 
@@ -1089,6 +1090,111 @@ TEST(TopOfBookSeries, SamplesBestLevelEachTick) {
   EXPECT_EQ(c.ask_price, (std::vector<std::uint32_t>{0, 0, 1'010'000}));
   EXPECT_EQ(c.ask_shares, (std::vector<std::uint64_t>{0, 0, 20}));
   EXPECT_EQ(series.locate(), 13u);
+}
+
+namespace {
+
+// Writes messages to a temp file, each with its 2-byte length prefix.
+std::filesystem::path write_messages(const char* name,
+                                     const std::vector<std::vector<std::uint8_t>>& messages) {
+  std::vector<std::uint8_t> bytes;
+  for (const auto& m : messages) {
+    bytes.push_back(static_cast<std::uint8_t>(m.size() >> 8));
+    bytes.push_back(static_cast<std::uint8_t>(m.size() & 0xFF));
+    bytes.insert(bytes.end(), m.begin(), m.end());
+  }
+  return write_bytes(name, bytes);
+}
+
+}  // namespace
+
+TEST(MessageReader, ReportsOffsetsAndResumes) {
+  const auto path = write_messages("itchbook-reader", {blank('D'), blank('A'), blank('X')});
+  itchbook::MessageReader reader(path);
+  std::vector<std::uint64_t> offsets;
+  while (reader.next()) {
+    offsets.push_back(reader.offset());
+  }
+  // Each message is its 2-byte prefix plus its spec length: D 19, A 36, X 23.
+  EXPECT_EQ(offsets, (std::vector<std::uint64_t>{0, 21, 59}));
+
+  itchbook::MessageReader resumed(path, 21);
+  ASSERT_TRUE(resumed.next());
+  EXPECT_EQ(resumed.data()[0], 'A');
+  EXPECT_EQ(resumed.size(), 36u);
+  EXPECT_EQ(resumed.offset(), 21u);
+  std::filesystem::remove(path);
+}
+
+namespace {
+
+// A short AAPL day (locate 13) with another stock (locate 14) mixed in.
+std::vector<std::vector<std::uint8_t>> snapshot_day() {
+  return {
+      aapl_directory(),                                          // 09:30:00
+      stamp(add(1, 'B', 10, 1'000'000, 13), 34'210),
+      stamp(add(2, 'S', 20, 1'010'000, 13), 34'230),
+      stamp(add(3, 'B', 7, 900'000, 14), 34'240),                // other stock
+      stamp(execute(1, 4), 34'290),
+      stamp(replace(2, 4, 15, 1'005'000), 34'350),
+      stamp(remove(4), 34'420),
+      stamp(add(5, 'B', 3, 1'001'000, 13), 34'500),
+  };
+}
+
+// The answer a plain replay from the start gives.
+itchbook::BookTop replay_to(const std::filesystem::path& path, std::uint64_t second) {
+  itchbook::BookAt book("AAPL", second * 1'000'000'000, 5);
+  itchbook::parse_file(path, book);
+  return book.result();
+}
+
+}  // namespace
+
+TEST(SnapshotIndex, MatchesFullReplayForEveryInterval) {
+  const auto path = write_messages("itchbook-snapshot", snapshot_day());
+  const std::vector<std::uint64_t> seconds{34'200, 34'215, 34'260, 34'290, 34'300,
+                                           34'359, 34'400, 34'450, 34'600};
+
+  for (const std::uint64_t interval : {0ull, 1ull, 30ull, 60ull, 3600ull}) {
+    const itchbook::SnapshotIndex index(path, {"AAPL", "NOPE"}, interval * 1'000'000'000);
+    EXPECT_EQ(index.symbols(), std::vector<std::string>{"AAPL"});
+    for (const std::uint64_t s : seconds) {
+      const auto got = index.book("AAPL", s * 1'000'000'000, 5);
+      ASSERT_TRUE(got.has_value());
+      const auto want = replay_to(path, s);
+      EXPECT_EQ(got->bids, want.bids) << "interval " << interval << " at " << s;
+      EXPECT_EQ(got->asks, want.asks) << "interval " << interval << " at " << s;
+    }
+  }
+  std::filesystem::remove(path);
+}
+
+TEST(SnapshotIndex, CountsSnapshotsAndMessages) {
+  const auto path = write_messages("itchbook-snapshot-stats", snapshot_day());
+  const itchbook::SnapshotIndex index(path, {"AAPL"}, 60'000'000'000);
+
+  EXPECT_EQ(index.stats().messages, 8u);
+  EXPECT_EQ(index.stats().by_type['A'], 4u);
+  // Ticks at 09:30, 09:31, 09:32, 09:33 and 09:34; the last message is 09:35.
+  EXPECT_EQ(index.stats().snapshots, 5u);
+  EXPECT_FALSE(index.book("MSFT", 34'300'000'000'000, 5).has_value());
+  std::filesystem::remove(path);
+}
+
+TEST(SnapshotIndex, BboSamplesEachInterval) {
+  const auto path = write_messages("itchbook-snapshot-bbo", snapshot_day());
+  const itchbook::SnapshotIndex index(path, {"AAPL"}, 60'000'000'000);
+
+  const auto bbo = index.bbo("AAPL", 34'260'000'000'000, 34'440'000'000'000, 60'000'000'000);
+  ASSERT_TRUE(bbo.has_value());
+  EXPECT_EQ(bbo->time.size(), 4u);  // 09:31, 09:32, 09:33, 09:34
+  for (std::size_t i = 0; i < bbo->time.size(); ++i) {
+    const auto want = replay_to(path, bbo->time[i] / 1'000'000'000);
+    EXPECT_EQ(bbo->bid_price[i], want.bids.empty() ? 0 : want.bids[0].price) << i;
+    EXPECT_EQ(bbo->ask_price[i], want.asks.empty() ? 0 : want.asks[0].price) << i;
+  }
+  std::filesystem::remove(path);
 }
 
 TEST(Core, ReadMessagesStopsWhenCutOff) {
