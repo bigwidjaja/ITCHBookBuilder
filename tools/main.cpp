@@ -1,6 +1,7 @@
 #include "itchbook/core.hpp"
 #include "itchbook/dump.hpp"
 #include "itchbook/format.hpp"
+#include "itchbook/book_v2.hpp"
 #include "itchbook/replay.hpp"
 #include "itchbook/stats.hpp"
 
@@ -61,8 +62,9 @@ int usage() {
             << "       itchbook dump PATH [--type T] [--limit N]\n"
             << "       itchbook stats PATH\n"
             << "       itchbook parse PATH\n"
-            << "       itchbook book PATH --symbol S --at HH:MM:SS [--depth N]\n"
-            << "       itchbook book PATH [--golden OUT.csv]\n";
+            << "       itchbook book PATH --symbol S --at HH:MM:SS [--depth N] [--book NAME]\n"
+            << "       itchbook book PATH [--golden OUT.csv] [--book NAME]\n"
+            << "       itchbook diff PATH [--book NAME]     (compares BookV1 with NAME, default v2)\n";
   return 1;
 }
 
@@ -155,9 +157,25 @@ void print_top(const itchbook::BookTop& t) {
   }
 }
 
+// The books --book can name. f is a template lambda, `[&]<class Book>() {...}`;
+// this calls it with the named book type. nullopt if no book has that name.
+constexpr std::string_view book_names = "v1, v2";
+
+template <class F>
+std::optional<int> with_book(std::string_view name, F&& f) {
+  if (name == "v1") {
+    return f.template operator()<itchbook::BookV1>();
+  }
+  if (name == "v2") {
+    return f.template operator()<itchbook::BookV2>();
+  }
+  return std::nullopt;
+}
+
+template <class Book>
 int book_at(const std::filesystem::path& path, const std::string& symbol, std::uint64_t time,
             std::size_t depth) {
-  itchbook::BookAt book(symbol, time, depth);
+  itchbook::BookAtT<Book> book(symbol, time, depth);
   itchbook::parse_file(path, book);
   const auto locate = book.locate();
   if (!locate) {
@@ -172,19 +190,20 @@ int book_at(const std::filesystem::path& path, const std::string& symbol, std::u
 
 // Replays the whole file and reports on it. With a golden path, also writes
 // the golden CSV.
+template <class Book>
 int book_replay(const std::filesystem::path& path, const std::string& golden_path) {
   std::ofstream golden;
-  std::unique_ptr<itchbook::CheckedBook> book;
-  const itchbook::GoldenWriter* writer = nullptr;
+  std::unique_ptr<itchbook::CheckedBookT<Book>> book;
+  const itchbook::GoldenWriterT<Book>* writer = nullptr;
   if (golden_path.empty()) {
-    book = std::make_unique<itchbook::CheckedBook>();
+    book = std::make_unique<itchbook::CheckedBookT<Book>>();
   } else {
     golden.open(golden_path);
     if (!golden) {
       std::cerr << "cannot write " << golden_path << '\n';
       return 1;
     }
-    auto w = std::make_unique<itchbook::GoldenWriter>(golden, golden_symbols, golden_depth);
+    auto w = std::make_unique<itchbook::GoldenWriterT<Book>>(golden, golden_symbols, golden_depth);
     writer = w.get();
     book = std::move(w);
   }
@@ -220,19 +239,60 @@ int book_replay(const std::filesystem::path& path, const std::string& golden_pat
   return 0;
 }
 
+// Replays the file into BookV1 and Book side by side, comparing the touched
+// stock's top 5 levels and the live order count after every book message.
+template <class Book>
+int diff_file(const std::filesystem::path& path) {
+  auto diff = std::make_unique<itchbook::DiffBooks<itchbook::BookV1, Book>>();
+  const auto start = std::chrono::steady_clock::now();
+  itchbook::parse_file(path, *diff);
+  const double seconds =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+  std::cout << "book messages compared: " << diff->compared() << '\n';
+  std::cout << "mismatches: " << diff->mismatches() << '\n';
+  if (const auto& m = diff->first_mismatch()) {
+    std::cout << "first mismatch: " << m->type << " message for locate " << m->stock_locate
+              << " at " << itchbook::format_timestamp(m->timestamp) << '\n';
+  }
+  std::cout << "errors: v1 " << diff->a().errors() << ", other " << diff->b().errors() << '\n';
+  std::cout << "live orders at end: v1 " << diff->a().order_count() << ", other "
+            << diff->b().order_count() << '\n';
+  std::cout << std::format("seconds: {:.3f}\n", seconds);
+  return diff->mismatches() == 0 ? 0 : 1;
+}
+
+int diff_command(int argc, char** argv) {
+  std::string_view book = "v2";
+  if (argc == 5 && std::string_view(argv[3]) == "--book") {
+    book = argv[4];
+  } else if (argc != 3) {
+    return usage();
+  }
+  const auto result = with_book(book, [&]<class Book>() { return diff_file<Book>(argv[2]); });
+  if (!result) {
+    std::cerr << "--book must be one of: " << book_names << '\n';
+    return 1;
+  }
+  return *result;
+}
+
 // argv[2] is the path. The rest are flag/value pairs.
 int book_file(int argc, char** argv) {
   std::string symbol;
   std::optional<std::uint64_t> time;
   std::uint64_t depth = 5;
   std::string golden_path;
+  std::string_view book = "v1";
   for (int i = 3; i < argc; i += 2) {
     if (i + 1 >= argc) {
       return usage();
     }
     const std::string_view flag = argv[i];
     const std::string_view value = argv[i + 1];
-    if (flag == "--symbol") {
+    if (flag == "--book") {
+      book = value;
+    } else if (flag == "--symbol") {
       symbol = value;
     } else if (flag == "--at") {
       time = itchbook::parse_timestamp(value);
@@ -252,13 +312,18 @@ int book_file(int argc, char** argv) {
     }
   }
 
-  if (symbol.empty() && !time) {
-    return book_replay(argv[2], golden_path);
-  }
-  if (symbol.empty() || !time || !golden_path.empty()) {
+  if (!symbol.empty() != time.has_value() || (time && !golden_path.empty())) {
     return usage();  // --symbol and --at go together, and not with --golden
   }
-  return book_at(argv[2], symbol, *time, depth);
+  const auto result = with_book(book, [&]<class Book>() {
+    return time ? book_at<Book>(argv[2], symbol, *time, depth)
+                : book_replay<Book>(argv[2], golden_path);
+  });
+  if (!result) {
+    std::cerr << "--book must be one of: " << book_names << '\n';
+    return 1;
+  }
+  return *result;
 }
 
 }  // namespace
@@ -270,6 +335,9 @@ int main(int argc, char** argv) {
     }
     if (argc >= 3 && std::strcmp(argv[1], "book") == 0) {
       return book_file(argc, argv);
+    }
+    if (argc >= 3 && std::strcmp(argv[1], "diff") == 0) {
+      return diff_command(argc, argv);
     }
     if (argc == 3 && std::strcmp(argv[1], "stats") == 0) {
       return stats_file(argv[2]);

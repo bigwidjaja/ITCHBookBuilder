@@ -1,4 +1,5 @@
 #include "itchbook/book_v1.hpp"
+#include "itchbook/book_v2.hpp"
 #include "itchbook/core.hpp"
 #include "itchbook/dump.hpp"
 #include "itchbook/flat_map.hpp"
@@ -729,8 +730,28 @@ using Levels = std::vector<itchbook::Level>;
 
 }  // namespace
 
-TEST(BookV1, AddBuildsLevelsBestFirst) {
-  itchbook::BookV1 book;
+// Every book test runs once per book type: BookV2 must behave exactly like
+// BookV1. Inside a TYPED_TEST, TypeParam is the book type being tested.
+template <class Book>
+class BookTest : public ::testing::Test {};
+template <class Book>
+class BookDeathTest : public ::testing::Test {};
+
+using BookTypes = ::testing::Types<itchbook::BookV1, itchbook::BookV2>;
+
+// Names the runs "v1" and "v2" in test output instead of the full type names.
+struct BookNames {
+  template <class Book>
+  static std::string GetName(int) {
+    return std::is_same_v<Book, itchbook::BookV1> ? "v1" : "v2";
+  }
+};
+
+TYPED_TEST_SUITE(BookTest, BookTypes, BookNames);
+TYPED_TEST_SUITE(BookDeathTest, BookTypes, BookNames);
+
+TYPED_TEST(BookTest, AddBuildsLevelsBestFirst) {
+  TypeParam book;
   feed(book, add(1, 'B', 10, 100));
   feed(book, add(2, 'B', 5, 100));  // same price: joins the level
   feed(book, add(3, 'B', 7, 101));
@@ -743,8 +764,8 @@ TEST(BookV1, AddBuildsLevelsBestFirst) {
   EXPECT_EQ(book.order_count(), 5u);
 }
 
-TEST(BookV1, TopLimitsDepth) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, TopLimitsDepth) {
+  TypeParam book;
   feed(book, add(1, 'B', 10, 100));
   feed(book, add(2, 'B', 10, 99));
   feed(book, add(3, 'B', 10, 98));
@@ -752,8 +773,8 @@ TEST(BookV1, TopLimitsDepth) {
   EXPECT_EQ(book.top(1, 2).bids, (Levels{{100, 10}, {99, 10}}));
 }
 
-TEST(BookV1, ExecuteReducesThenRemoves) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, ExecuteReducesThenRemoves) {
+  TypeParam book;
   feed(book, add(1, 'B', 10, 100));
 
   feed(book, execute(1, 4));
@@ -765,16 +786,16 @@ TEST(BookV1, ExecuteReducesThenRemoves) {
   EXPECT_EQ(book.order_count(), 0u);
 }
 
-TEST(BookV1, ExecuteWithPriceUsesOrderPrice) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, ExecuteWithPriceUsesOrderPrice) {
+  TypeParam book;
   feed(book, add(1, 'S', 10, 100));
   feed(book, execute_with_price(1, 4, 105));  // traded at 105, but rests at 100
 
   EXPECT_EQ(book.top(1, 5).asks, (Levels{{100, 6}}));
 }
 
-TEST(BookV1, CancelReducesShares) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, CancelReducesShares) {
+  TypeParam book;
   feed(book, add(1, 'B', 10, 100));
   feed(book, cancel(1, 3));
 
@@ -782,8 +803,8 @@ TEST(BookV1, CancelReducesShares) {
   EXPECT_EQ(book.order_count(), 1u);
 }
 
-TEST(BookV1, DeleteRemovesOnlyThatOrder) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, DeleteRemovesOnlyThatOrder) {
+  TypeParam book;
   feed(book, add(1, 'B', 10, 100));
   feed(book, add(2, 'B', 5, 100));
   feed(book, remove(1));
@@ -792,8 +813,8 @@ TEST(BookV1, DeleteRemovesOnlyThatOrder) {
   EXPECT_EQ(book.order_count(), 1u);
 }
 
-TEST(BookV1, ReplaceKeepsLocateAndSide) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, ReplaceKeepsLocateAndSide) {
+  TypeParam book;
   feed(book, add(1, 'S', 10, 100, 7));
   feed(book, replace(1, 2, 20, 101));
 
@@ -810,8 +831,8 @@ TEST(BookV1, ReplaceKeepsLocateAndSide) {
   EXPECT_EQ(book.errors(), 1u);
 }
 
-TEST(BookV1, BooksAreSeparatePerStock) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, BooksAreSeparatePerStock) {
+  TypeParam book;
   feed(book, add(1, 'B', 10, 100, 1));
   feed(book, add(2, 'B', 20, 200, 2));
 
@@ -820,8 +841,8 @@ TEST(BookV1, BooksAreSeparatePerStock) {
   EXPECT_TRUE(book.top(3, 5).bids.empty());  // never seen
 }
 
-TEST(BookV1, UnknownOrDuplicateRefIsAnError) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, UnknownOrDuplicateRefIsAnError) {
+  TypeParam book;
   feed(book, execute(99, 1));
   feed(book, remove(99));
   feed(book, add(1, 'B', 10, 100));
@@ -834,16 +855,16 @@ TEST(BookV1, UnknownOrDuplicateRefIsAnError) {
 // Death tests run in a child process, so a failed assert ends the child, not
 // the test run. EXPECT_DEBUG_DEATH only expects a death in Debug builds,
 // where assert is on; in Release it just runs the statement.
-TEST(BookV1DeathTest, ExecuteMoreThanOrderAsserts) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookDeathTest, ExecuteMoreThanOrderAsserts) {
+  TypeParam book;
   feed(book, add(1, 'B', 10, 100));
-  EXPECT_DEBUG_DEATH(feed(book, execute(1, 11)), "shares <= order.shares");
+  EXPECT_DEBUG_DEATH(feed(book, execute(1, 11)), "shares <= order");
 }
 
-TEST(BookV1DeathTest, CancelMoreThanOrderAsserts) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookDeathTest, CancelMoreThanOrderAsserts) {
+  TypeParam book;
   feed(book, add(1, 'S', 10, 100));
-  EXPECT_DEBUG_DEATH(feed(book, cancel(1, 11)), "shares <= order.shares");
+  EXPECT_DEBUG_DEATH(feed(book, cancel(1, 11)), "shares <= order");
 }
 
 namespace {
@@ -856,8 +877,9 @@ struct ScriptStep {
   Levels asks;
 };
 
+template <class Book>
 void run_script(const std::vector<ScriptStep>& script, std::uint16_t locate = 1) {
-  itchbook::BookV1 book;
+  Book book;
   for (std::size_t i = 0; i < script.size(); ++i) {
     feed(book, script[i].message);
     const auto top = book.top(locate, 10);
@@ -869,8 +891,8 @@ void run_script(const std::vector<ScriptStep>& script, std::uint16_t locate = 1)
 
 }  // namespace
 
-TEST(BookV1Script, AddPartialExecuteReplaceDelete) {
-  run_script({
+TYPED_TEST(BookTest, ScriptAddPartialExecuteReplaceDelete) {
+  run_script<TypeParam>({
       {add(1, 'B', 100, 10'000), {{10'000, 100}}, {}},
       {add(2, 'B', 50, 10'000), {{10'000, 150}}, {}},
       {add(3, 'S', 200, 10'100), {{10'000, 150}}, {{10'100, 200}}},
@@ -884,8 +906,8 @@ TEST(BookV1Script, AddPartialExecuteReplaceDelete) {
   });
 }
 
-TEST(BookV1Script, ReplaceToSameLevelAndBack) {
-  run_script({
+TYPED_TEST(BookTest, ScriptReplaceToSameLevelAndBack) {
+  run_script<TypeParam>({
       {add(1, 'S', 100, 5'000), {}, {{5'000, 100}}},
       {add(2, 'S', 100, 5'000), {}, {{5'000, 200}}},
       {replace(1, 3, 40, 5'000), {}, {{5'000, 140}}},  // same price, fewer shares
@@ -897,8 +919,8 @@ TEST(BookV1Script, ReplaceToSameLevelAndBack) {
 
 // The real ARGX orders from small.itch: order 8913 is replaced by 32997, one
 // cent higher. Prices have 4 implied decimals.
-TEST(BookV1Script, ArgxReplaceFromRealData) {
-  run_script(
+TYPED_TEST(BookTest, ScriptArgxReplaceFromRealData) {
+  run_script<TypeParam>(
       {
           {add(8881, 'B', 2000, 1'605'800, 496), {{1'605'800, 2000}}, {}},
           {add(8913, 'S', 400, 1'624'700, 496), {{1'605'800, 2000}}, {{1'624'700, 400}}},
@@ -912,8 +934,8 @@ TEST(BookV1Script, ArgxReplaceFromRealData) {
       496);
 }
 
-TEST(BookV1, PeakOrderCount) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, PeakOrderCount) {
+  TypeParam book;
   feed(book, add(1, 'B', 10, 100));
   feed(book, add(2, 'B', 10, 100));
   feed(book, add(3, 'B', 10, 100));
@@ -927,8 +949,8 @@ TEST(BookV1, PeakOrderCount) {
   EXPECT_EQ(book.peak_order_count(), 4u);
 }
 
-TEST(BookV1, State) {
-  itchbook::BookV1 book;
+TYPED_TEST(BookTest, State) {
+  TypeParam book;
   EXPECT_EQ(book.state(1), itchbook::BookState::Normal);  // no book at all
 
   feed(book, add(1, 'B', 10, 100));
@@ -1430,4 +1452,44 @@ TEST(FlatMap, MatchesUnorderedMapOnTenMillionRandomOps) {
     ASSERT_NE(flat.find(key), nullptr);
     ASSERT_EQ(*flat.find(key), value);
   }
+}
+
+namespace {
+
+// A BookV2 with a bug planted on purpose: it ignores cancels.
+class BookIgnoringCancels : public itchbook::BookV2 {
+ public:
+  void on_cancel(const itchbook::OrderCancel&) override {}
+};
+
+// All on stock 13, the locate the execute/cancel/remove/replace helpers put
+// in their headers. DiffBooks compares the stock a message's header names,
+// which in real ITCH is always the stock of the order it touches.
+std::vector<std::vector<std::uint8_t>> busy_script() {
+  return {add(1, 'B', 100, 10'000, 13), add(2, 'B', 50, 10'000, 13),
+          add(3, 'S', 200, 10'100, 13), execute(1, 30),
+          replace(3, 4, 80, 10'050),    cancel(2, 20),
+          remove(1),                    execute_with_price(4, 80, 10'060)};
+}
+
+}  // namespace
+
+TEST(DiffBooks, AgreeingBooksHaveNoMismatches) {
+  itchbook::DiffBooks<itchbook::BookV1, itchbook::BookV2> diff;
+  for (const auto& m : busy_script()) {
+    feed(diff, m);
+  }
+  EXPECT_EQ(diff.compared(), 8u);
+  EXPECT_EQ(diff.mismatches(), 0u);
+  EXPECT_FALSE(diff.first_mismatch().has_value());
+}
+
+TEST(DiffBooks, CatchesABrokenBook) {
+  itchbook::DiffBooks<itchbook::BookV1, BookIgnoringCancels> diff;
+  for (const auto& m : busy_script()) {
+    feed(diff, m);
+  }
+  EXPECT_GT(diff.mismatches(), 0u);
+  ASSERT_TRUE(diff.first_mismatch().has_value());
+  EXPECT_EQ(diff.first_mismatch()->type, 'X');  // the first cancel is where they part
 }
