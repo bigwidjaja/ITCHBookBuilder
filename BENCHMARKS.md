@@ -32,7 +32,7 @@ python python/scripts/api_latency.py        # Step 12 task 6, now on BookV2
 
 | Step | Rows owed |
 | --- | --- |
-| 9 | `ifstream` vs mmap for `count`, `parse`, `book`, warm and cold (preliminary 2 GB slice results in `notes/step-9.md`) |
+| 9 | `ifstream` vs mmap for `count`, `parse`, `book`, warm and cold. Preliminary, on the first 2 GB of the day, both builds alternating: `count` 3.8x to 5.4x faster, `parse` 2.5x to 2.7x, `book` 8% to 15% |
 | 10 | BookV2 setup, `reserve`, FlatMap, direct array (decide FlatMap or direct from speed and peak memory) |
 | 11 | books by locate, sorted vectors with scan, with binary search (keep the faster), level pool, 12-byte orders; cachegrind v1 vs v2 |
 | 12 | virtual vs template dispatch, `-O2` / `-O3` / `-march=native` / LTO, final flame graph, API latency rerun; then tag `v2.0` |

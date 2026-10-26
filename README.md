@@ -67,4 +67,4 @@ scripts/flamegraph.sh                                    # flame graph of a full
 scripts/measure_phase4.sh                                # every Phase 4 variant, each from its own commit
 ```
 
-Step-by-step notes are in `notes/`.
+`notes/` has the measurement evidence BENCHMARKS.md cites: the day's data shape, the v1 flame graph and the v1 cachegrind report.

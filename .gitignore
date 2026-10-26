@@ -8,3 +8,9 @@ build-prof/
 __pycache__/
 .pytest_cache/
 build-measure/
+
+# Personal study notes: kept locally, not published
+notes/ITCH Book Builder Project Plan and Assignment.md
+notes/phases/
+notes/braindumps/
+notes/step-*.md
