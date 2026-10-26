@@ -9,6 +9,30 @@ option(ITCHBOOK_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer
 option(ITCHBOOK_BUILD_TESTS "Build the GoogleTest suite" ON)
 option(ITCHBOOK_PYTHON "Build the Python module (pip install . turns this on)" OFF)
 option(ITCHBOOK_BUILD_BENCH "Build the Google Benchmark microbenchmarks" OFF)
+option(ITCHBOOK_NATIVE "Optimize for this machine's CPU (-march=native)" OFF)
+option(ITCHBOOK_LTO "Link-time optimization: optimize across .cpp files at link time" OFF)
+
+# Step 12 compiler experiments. Both are off by default: -march=native makes a
+# binary that may not run on another CPU, and LTO makes linking slower.
+if(ITCHBOOK_NATIVE)
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(-march=native ITCHBOOK_HAS_MARCH_NATIVE)
+  if(ITCHBOOK_HAS_MARCH_NATIVE)
+    add_compile_options(-march=native)
+  else()
+    message(WARNING "ITCHBOOK_NATIVE: the compiler does not accept -march=native")
+  endif()
+endif()
+if(ITCHBOOK_LTO)
+  # Set before any target is defined, so every target picks it up.
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT ITCHBOOK_HAS_LTO OUTPUT ITCHBOOK_LTO_ERROR)
+  if(ITCHBOOK_HAS_LTO)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+  else()
+    message(WARNING "ITCHBOOK_LTO: not supported here: ${ITCHBOOK_LTO_ERROR}")
+  endif()
+endif()
 
 # The library holds the real code. Later front ends link this same target.
 add_library(itchbook_core STATIC
