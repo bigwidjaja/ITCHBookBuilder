@@ -9,9 +9,13 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <map>
+#include <new>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace itchbook {
@@ -58,6 +62,101 @@ class StdOrderStore {
 
  private:
   std::unordered_map<std::uint64_t, OrderV2> map_;
+};
+
+// The largest order reference number on 2019-12-30, measured in Step 3.
+inline constexpr std::uint64_t day_largest_order_ref = 308'631'072;
+
+// Orders in one array indexed directly by reference number (Step 10 task 5):
+// order 8913 is slots_[8913], with no hashing and no probing.
+//
+// The cost is memory: the array spans every reference number up to the
+// largest, used or not, so it takes sizeof(OrderV2) = 12 bytes per number,
+// about 3.7 GB for the full day. calloc helps only at first: it returns pages
+// the OS has not handed out yet, made real (zero-filled) when first written.
+// Over a day the references sweep across the whole range, so most pages end
+// up written.
+//
+// A slot with stock locate 0 is empty: locates start at 1, and 0 only appears
+// on system messages, never on an order. (The first version marked empty
+// slots with 0 shares, and the typed book tests caught it: the book sets an
+// order's shares to 0 before erasing it, so erase then found nothing.)
+//
+// It owns raw memory from calloc, so copying is deleted and moving hands the
+// array over, as with MappedFile.
+class DirectOrderStore {
+ public:
+  DirectOrderStore() = default;
+  ~DirectOrderStore() { std::free(slots_); }
+
+  DirectOrderStore(const DirectOrderStore&) = delete;
+  DirectOrderStore& operator=(const DirectOrderStore&) = delete;
+  DirectOrderStore(DirectOrderStore&& other) noexcept
+      : slots_(std::exchange(other.slots_, nullptr)),
+        capacity_(std::exchange(other.capacity_, 0)),
+        size_(std::exchange(other.size_, 0)) {}
+  DirectOrderStore& operator=(DirectOrderStore&& other) noexcept {
+    if (this != &other) {
+      std::free(slots_);
+      slots_ = std::exchange(other.slots_, nullptr);
+      capacity_ = std::exchange(other.capacity_, 0);
+      size_ = std::exchange(other.size_, 0);
+    }
+    return *this;
+  }
+
+  OrderV2* find(std::uint64_t ref) {
+    return ref < capacity_ && slots_[ref].locate != 0 ? &slots_[ref] : nullptr;
+  }
+
+  bool insert(std::uint64_t ref, const OrderV2& order) {
+    if (ref >= capacity_) {
+      grow(ref + 1);
+    }
+    if (slots_[ref].locate != 0) {
+      return false;
+    }
+    slots_[ref] = order;
+    ++size_;
+    return true;
+  }
+
+  bool erase(std::uint64_t ref) {
+    OrderV2* order = find(ref);
+    if (order == nullptr) {
+      return false;
+    }
+    *order = OrderV2{};
+    --size_;
+    return true;
+  }
+
+  std::size_t size() const { return size_; }
+
+  // n counts live orders, but this array is sized by the largest reference
+  // number, so there is nothing useful to reserve here.
+  void reserve(std::size_t) {}
+
+ private:
+  // The first allocation covers the whole day's range at once: calloc'd pages
+  // cost nothing until written, and growing later would copy gigabytes.
+  void grow(std::uint64_t needed) {
+    const std::uint64_t capacity = std::max({needed, capacity_ * 2, day_largest_order_ref + 1});
+    auto* slots = static_cast<OrderV2*>(std::calloc(capacity, sizeof(OrderV2)));
+    if (slots == nullptr) {
+      throw std::bad_alloc();
+    }
+    if (slots_ != nullptr) {
+      std::memcpy(slots, slots_, capacity_ * sizeof(OrderV2));
+      std::free(slots_);
+    }
+    slots_ = slots;
+    capacity_ = capacity;
+  }
+
+  OrderV2* slots_ = nullptr;
+  std::uint64_t capacity_ = 0;
+  std::size_t size_ = 0;
 };
 
 template <class OrderStore>
@@ -224,5 +323,8 @@ using BookV2 = BasicBookV2<FlatMap<std::uint64_t, OrderV2>>;
 // The same book with std::unordered_map orders, kept so the two stores can be
 // compared from one binary (itchbook book --book v2-std).
 using BookV2Std = BasicBookV2<StdOrderStore>;
+
+// The direct-array experiment (itchbook book --book v2-direct).
+using BookV2Direct = BasicBookV2<DirectOrderStore>;
 
 }  // namespace itchbook

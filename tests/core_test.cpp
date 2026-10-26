@@ -737,7 +737,8 @@ class BookTest : public ::testing::Test {};
 template <class Book>
 class BookDeathTest : public ::testing::Test {};
 
-using BookTypes = ::testing::Types<itchbook::BookV1, itchbook::BookV2, itchbook::BookV2Std>;
+using BookTypes =
+    ::testing::Types<itchbook::BookV1, itchbook::BookV2, itchbook::BookV2Std, itchbook::BookV2Direct>;
 
 // Names the runs "v1" and "v2" in test output instead of the full type names.
 struct BookNames {
@@ -747,6 +748,8 @@ struct BookNames {
       return "v1";
     } else if constexpr (std::is_same_v<Book, itchbook::BookV2Std>) {
       return "v2_std";
+    } else if constexpr (std::is_same_v<Book, itchbook::BookV2Direct>) {
+      return "v2_direct";
     } else {
       return "v2";
     }
@@ -1498,4 +1501,29 @@ TEST(DiffBooks, CatchesABrokenBook) {
   EXPECT_GT(diff.mismatches(), 0u);
   ASSERT_TRUE(diff.first_mismatch().has_value());
   EXPECT_EQ(diff.first_mismatch()->type, 'X');  // the first cancel is where they part
+}
+
+static_assert(!std::is_copy_constructible_v<itchbook::DirectOrderStore>);
+static_assert(std::is_nothrow_move_constructible_v<itchbook::DirectOrderStore>);
+
+TEST(DirectOrderStore, IndexesByReference) {
+  itchbook::DirectOrderStore store;
+  EXPECT_EQ(store.find(5), nullptr);  // nothing allocated yet
+  EXPECT_TRUE(store.insert(5, {1, itchbook::Side::Buy, 100, 10}));
+  EXPECT_FALSE(store.insert(5, {1, itchbook::Side::Buy, 100, 10}));  // already live
+  ASSERT_NE(store.find(5), nullptr);
+  EXPECT_EQ(store.find(5)->shares, 10u);
+  EXPECT_EQ(store.find(6), nullptr);
+  EXPECT_EQ(store.size(), 1u);
+
+  // Past the day's largest reference: the array grows and keeps what it had.
+  const std::uint64_t far = itchbook::day_largest_order_ref + 10;
+  EXPECT_TRUE(store.insert(far, {2, itchbook::Side::Sell, 200, 3}));
+  EXPECT_EQ(store.find(5)->shares, 10u);
+  EXPECT_EQ(store.find(far)->price, 200u);
+
+  EXPECT_TRUE(store.erase(5));
+  EXPECT_FALSE(store.erase(5));
+  EXPECT_EQ(store.find(5), nullptr);
+  EXPECT_EQ(store.size(), 1u);
 }
