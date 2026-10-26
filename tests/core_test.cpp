@@ -1545,3 +1545,96 @@ TEST(LevelSearch, ScanAndBinarySearchAgree) {
     EXPECT_EQ(scan.second, p % 10 == 0 && p >= 100 && p <= 300) << "price " << p;
   }
 }
+
+namespace {
+
+// A random but valid message stream: every execute, cancel, delete and
+// replace names a live order, and every message's header names its order's
+// stock, as in real ITCH. Prices cluster near the top of each side, so levels
+// are created, emptied and reused all the time.
+std::vector<std::vector<std::uint8_t>> random_stream(std::size_t count, std::uint64_t seed) {
+  struct Live {
+    std::uint16_t locate;
+    std::uint32_t shares;
+  };
+  std::mt19937_64 rng(seed);
+  std::unordered_map<std::uint64_t, Live> live;
+  std::vector<std::uint64_t> refs;  // live references, for picking one at random
+  std::uint64_t next_ref = 1;
+  std::vector<std::vector<std::uint8_t>> out;
+
+  const auto pick = [&]() -> std::size_t {
+    return std::uniform_int_distribution<std::size_t>(0, refs.size() - 1)(rng);
+  };
+  const auto forget = [&](std::size_t i) {
+    live.erase(refs[i]);
+    refs[i] = refs.back();
+    refs.pop_back();
+  };
+  const auto with_locate = [](std::vector<std::uint8_t> m, std::uint16_t locate) {
+    put_be(m, 1, locate, 2);
+    return m;
+  };
+  const auto price_near_top = [&](bool buy) {
+    const auto ticks = std::geometric_distribution<std::uint32_t>(0.25)(rng);
+    return buy ? 10'000 - ticks * 100 : 10'100 + ticks * 100;
+  };
+
+  while (out.size() < count) {
+    const int op = std::uniform_int_distribution<int>(0, 99)(rng);
+    if (refs.empty() || op < 40) {
+      const auto locate = static_cast<std::uint16_t>(1 + rng() % 3);
+      const bool buy = rng() % 2 == 0;
+      const auto shares = static_cast<std::uint32_t>(1 + rng() % 500);
+      out.push_back(add(next_ref, buy ? 'B' : 'S', shares, price_near_top(buy), locate));
+      live[next_ref] = {locate, shares};
+      refs.push_back(next_ref++);
+      continue;
+    }
+    const std::size_t i = pick();
+    Live& order = live[refs[i]];
+    if (op < 70) {  // execute (op < 55) or cancel some or all shares
+      const auto shares = static_cast<std::uint32_t>(1 + rng() % order.shares);
+      out.push_back(with_locate(op < 55 ? execute(refs[i], shares) : cancel(refs[i], shares),
+                                order.locate));
+      order.shares -= shares;
+      if (order.shares == 0) {
+        forget(i);
+      }
+    } else if (op < 90) {
+      out.push_back(with_locate(remove(refs[i]), order.locate));
+      forget(i);
+    } else {
+      // A replace keeps the old order's stock and side; the side is not
+      // tracked here, so the new price is near the top of either side.
+      const auto shares = static_cast<std::uint32_t>(1 + rng() % 500);
+      const std::uint16_t locate = order.locate;
+      out.push_back(with_locate(replace(refs[i], next_ref, shares, price_near_top(rng() % 2 == 0)),
+                                locate));
+      forget(i);
+      live[next_ref] = {locate, shares};
+      refs.push_back(next_ref++);
+    }
+  }
+  return out;
+}
+
+template <class Book>
+class DiffAgainstV1 : public ::testing::Test {};
+using V2Books = ::testing::Types<itchbook::BookV2, itchbook::BookV2Std, itchbook::BookV2Direct,
+                                 itchbook::BookV2BinarySearch>;
+TYPED_TEST_SUITE(DiffAgainstV1, V2Books);
+
+}  // namespace
+
+// 200,000 random messages through v1 and each v2 variant side by side.
+TYPED_TEST(DiffAgainstV1, RandomStreamMatchesV1) {
+  itchbook::DiffBooks<itchbook::BookV1, TypeParam> diff;
+  for (const auto& m : random_stream(200'000, 42)) {
+    feed(diff, m);
+  }
+  EXPECT_EQ(diff.compared(), 200'000u);
+  EXPECT_EQ(diff.mismatches(), 0u);
+  EXPECT_EQ(diff.a().errors(), 0u);  // the stream really is valid
+  EXPECT_EQ(diff.b().errors(), 0u);
+}

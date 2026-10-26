@@ -46,6 +46,7 @@ struct OrderV2 {
   Side side;
   std::uint32_t price;
   std::uint32_t shares;
+  std::uint32_t level;  // pool index of its price level (Step 11 task 4)
 };
 
 // std::unordered_map behind the OrderStore interface: v1's order table.
@@ -204,7 +205,7 @@ class BasicBookV2 : public Handler {
   }
 
   void on_add(const AddOrder& m) override {
-    add_order(m.order_ref, {m.header.stock_locate, m.side, m.price, m.shares});
+    add_order(m.order_ref, m.header.stock_locate, m.side, m.price, m.shares);
   }
 
   void on_execute(const OrderExecuted& m) override { reduce_order(m.order_ref, m.executed_shares); }
@@ -222,7 +223,7 @@ class BasicBookV2 : public Handler {
       ++errors_;
       return;
     }
-    remove_from_level(*order, order->shares);
+    remove_shares(*order, order->shares);
     orders_.erase(m.order_ref);
   }
 
@@ -235,9 +236,9 @@ class BasicBookV2 : public Handler {
     }
     // A copy: erase() may move or free the stored order.
     const OrderV2 old = *found;
-    remove_from_level(old, old.shares);
+    remove_shares(old, old.shares);
     orders_.erase(m.original_order_ref);
-    add_order(m.new_order_ref, {old.locate, old.side, m.price, m.shares});
+    add_order(m.new_order_ref, old.locate, old.side, m.price, m.shares);
   }
 
   BookTop top(std::uint16_t locate, std::size_t depth) const {
@@ -279,13 +280,28 @@ class BasicBookV2 : public Handler {
   }
 
  private:
+  // A price level's shares live in one pool shared by every stock
+  // (Step 11 task 4). The sorted sides hold only {price, pool index}, and each
+  // order keeps its level's pool index, so execute, cancel and delete reach
+  // their level directly. Searching is left for when a level is created (an
+  // add at a new price) or emptied (it must leave its sorted side). Emptied
+  // pool slots go on a free list for reuse.
+  struct PoolLevel {
+    std::uint64_t shares;
+    std::uint32_t price;  // so an emptied level can be found on its side
+  };
+
+  struct LevelRef {
+    std::uint32_t price;  // copied here so searching a side stays in one array
+    std::uint32_t index;  // into pool_
+  };
+
   // Each side is sorted worst to best, so the best level is at the back: bids
   // by rising price, asks by falling price. Most updates are near the best
-  // price, so inserts and erases there move few elements, and neighboring
-  // levels share cache lines instead of being separate tree nodes.
+  // price, so inserts and erases there move few elements.
   struct Book {
-    std::vector<Level> bids;
-    std::vector<Level> asks;
+    std::vector<LevelRef> bids;
+    std::vector<LevelRef> asks;
   };
 
   // "a is a better price than b" on each side.
@@ -305,18 +321,18 @@ class BasicBookV2 : public Handler {
     return locate < books_.size() ? &books_[locate] : nullptr;
   }
 
-  void add_order(std::uint64_t ref, const OrderV2& order) {
+  void add_order(std::uint64_t ref, std::uint16_t locate, Side side, std::uint32_t price,
+                 std::uint32_t shares) {
+    // The level first, so the order can be stored with its pool index in one
+    // insert. A duplicate reference (never seen in real data) undoes it.
+    const std::uint32_t level = add_to_level(locate, side, price, shares);
+    const OrderV2 order{locate, side, price, shares, level};
     if (!orders_.insert(ref, order)) {
-      ++errors_;  // ref is already live; adding its shares again would double count
+      ++errors_;  // ref is already live; its shares must not count twice
+      remove_shares(order, shares);
       return;
     }
     peak_order_count_ = std::max(peak_order_count_, orders_.size());
-    Book& book = book_for(order.locate);
-    if (order.side == Side::Buy) {
-      add_to(book.bids, order.price, order.shares, BidBetter{});
-    } else {
-      add_to(book.asks, order.price, order.shares, AskBetter{});
-    }
   }
 
   void reduce_order(std::uint64_t ref, std::uint32_t shares) {
@@ -326,59 +342,88 @@ class BasicBookV2 : public Handler {
       return;
     }
     assert(shares <= order->shares);
-    remove_from_level(*order, shares);
+    remove_shares(*order, shares);
     order->shares -= shares;
     if (order->shares == 0) {
       orders_.erase(ref);
     }
   }
 
-  void remove_from_level(const OrderV2& order, std::uint32_t shares) {
+  // Adds shares at price on one side, creating the level if it is new.
+  // Returns the level's pool index.
+  std::uint32_t add_to_level(std::uint16_t locate, Side side, std::uint32_t price,
+                             std::uint64_t shares) {
+    Book& book = book_for(locate);
+    return side == Side::Buy ? add_to(book.bids, price, shares, BidBetter{})
+                             : add_to(book.asks, price, shares, AskBetter{});
+  }
+
+  template <class Better>
+  std::uint32_t add_to(std::vector<LevelRef>& side, std::uint32_t price, std::uint64_t shares,
+                       Better better) {
+    const auto [i, found] = LevelSearch::find(side, price, better);
+    if (found) {
+      pool_[side[i].index].shares += shares;
+      return side[i].index;
+    }
+    const std::uint32_t index = new_level(price, shares);
+    side.insert(side.begin() + static_cast<std::ptrdiff_t>(i), LevelRef{price, index});
+    return index;
+  }
+
+  // Takes shares off an order's level, straight through its pool index. Only
+  // an emptied level needs a search, to leave its sorted side.
+  void remove_shares(const OrderV2& order, std::uint64_t shares) {
+    PoolLevel& level = pool_[order.level];
+    assert(shares <= level.shares);
+    level.shares -= shares;
+    if (level.shares != 0) {
+      return;
+    }
     Book& book = book_for(order.locate);
     if (order.side == Side::Buy) {
-      subtract(book.bids, order.price, shares, BidBetter{});
+      erase_level(book.bids, level.price, order.level, BidBetter{});
     } else {
-      subtract(book.asks, order.price, shares, AskBetter{});
+      erase_level(book.asks, level.price, order.level, AskBetter{});
     }
+    free_levels_.push_back(order.level);
   }
 
   template <class Better>
-  static void add_to(std::vector<Level>& levels, std::uint32_t price, std::uint64_t shares,
-                     Better better) {
-    const auto [i, found] = LevelSearch::find(levels, price, better);
+  static void erase_level(std::vector<LevelRef>& side, std::uint32_t price, std::uint32_t index,
+                          Better better) {
+    const auto [i, found] = LevelSearch::find(side, price, better);
+    assert(found && side[i].index == index);
     if (found) {
-      levels[i].shares += shares;
-    } else {
-      levels.insert(levels.begin() + static_cast<std::ptrdiff_t>(i), Level{price, shares});
+      side.erase(side.begin() + static_cast<std::ptrdiff_t>(i));
     }
+    (void)index;  // only read by the assert
   }
 
-  template <class Better>
-  static void subtract(std::vector<Level>& levels, std::uint32_t price, std::uint64_t shares,
-                       Better better) {
-    const auto [i, found] = LevelSearch::find(levels, price, better);
-    assert(found);
-    if (!found) {
-      return;  // only possible if the invariants are already broken
+  std::uint32_t new_level(std::uint32_t price, std::uint64_t shares) {
+    if (!free_levels_.empty()) {
+      const std::uint32_t index = free_levels_.back();
+      free_levels_.pop_back();
+      pool_[index] = PoolLevel{shares, price};
+      return index;
     }
-    assert(shares <= levels[i].shares);
-    levels[i].shares -= shares;
-    if (levels[i].shares == 0) {
-      levels.erase(levels.begin() + static_cast<std::ptrdiff_t>(i));
-    }
+    pool_.push_back(PoolLevel{shares, price});
+    return static_cast<std::uint32_t>(pool_.size() - 1);
   }
 
   // The best depth levels, best first: walk from the back.
-  static std::vector<Level> first_levels(const std::vector<Level>& levels, std::size_t depth) {
+  std::vector<Level> first_levels(const std::vector<LevelRef>& side, std::size_t depth) const {
     std::vector<Level> out;
-    for (auto it = levels.rbegin(); it != levels.rend() && out.size() < depth; ++it) {
-      out.push_back(*it);
+    for (auto it = side.rbegin(); it != side.rend() && out.size() < depth; ++it) {
+      out.push_back({it->price, pool_[it->index].shares});
     }
     return out;
   }
 
-  OrderStore orders_;        // order reference -> order
-  std::vector<Book> books_;  // stock locate -> book
+  OrderStore orders_;                       // order reference -> order
+  std::vector<Book> books_;                 // stock locate -> book
+  std::vector<PoolLevel> pool_;             // every level of every stock
+  std::vector<std::uint32_t> free_levels_;  // pool indexes free for reuse
   SymbolDirectory symbols_;
   std::size_t peak_order_count_ = 0;
   std::uint64_t errors_ = 0;
