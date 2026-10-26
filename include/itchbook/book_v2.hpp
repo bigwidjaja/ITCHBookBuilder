@@ -204,20 +204,20 @@ class BasicBookV2 : public Handler {
   }
 
   BookTop top(std::uint16_t locate, std::size_t depth) const {
-    const auto it = books_.find(locate);
-    if (it == books_.end()) {
+    const Book* book = find_book(locate);
+    if (book == nullptr) {
       return {};
     }
-    return {first_levels(it->second.bids, depth), first_levels(it->second.asks, depth)};
+    return {first_levels(book->bids, depth), first_levels(book->asks, depth)};
   }
 
   BookState state(std::uint16_t locate) const {
-    const auto it = books_.find(locate);
-    if (it == books_.end() || it->second.bids.empty() || it->second.asks.empty()) {
+    const Book* book = find_book(locate);
+    if (book == nullptr || book->bids.empty() || book->asks.empty()) {
       return BookState::Normal;
     }
-    const std::uint32_t best_bid = it->second.bids.begin()->first;
-    const std::uint32_t best_ask = it->second.asks.begin()->first;
+    const std::uint32_t best_bid = book->bids.begin()->first;
+    const std::uint32_t best_ask = book->asks.begin()->first;
     if (best_bid == best_ask) {
       return BookState::Locked;
     }
@@ -235,7 +235,7 @@ class BasicBookV2 : public Handler {
 
   std::size_t level_count() const {
     std::size_t levels = 0;
-    for (const auto& [locate, book] : books_) {
+    for (const Book& book : books_) {
       levels += book.bids.size() + book.asks.size();
     }
     return levels;
@@ -247,13 +247,26 @@ class BasicBookV2 : public Handler {
     std::map<std::uint32_t, std::uint64_t> asks;                   // price -> total shares, best first
   };
 
+  // books_ is indexed by stock locate: locates are small and have no gaps
+  // (1 to 8,906 on 2019-12-30), so an index replaces a hash lookup.
+  Book& book_for(std::uint16_t locate) {
+    if (locate >= books_.size()) {
+      books_.resize(std::size_t{locate} + 1);
+    }
+    return books_[locate];
+  }
+
+  const Book* find_book(std::uint16_t locate) const {
+    return locate < books_.size() ? &books_[locate] : nullptr;
+  }
+
   void add_order(std::uint64_t ref, const OrderV2& order) {
     if (!orders_.insert(ref, order)) {
       ++errors_;  // ref is already live; adding its shares again would double count
       return;
     }
     peak_order_count_ = std::max(peak_order_count_, orders_.size());
-    Book& book = books_[order.locate];
+    Book& book = book_for(order.locate);
     if (order.side == Side::Buy) {
       book.bids[order.price] += order.shares;
     } else {
@@ -276,7 +289,7 @@ class BasicBookV2 : public Handler {
   }
 
   void remove_from_level(const OrderV2& order, std::uint32_t shares) {
-    Book& book = books_[order.locate];
+    Book& book = book_for(order.locate);
     if (order.side == Side::Buy) {
       subtract(book.bids, order.price, shares);
     } else {
@@ -310,8 +323,8 @@ class BasicBookV2 : public Handler {
     return out;
   }
 
-  OrderStore orders_;                              // order reference -> order
-  std::unordered_map<std::uint16_t, Book> books_;  // stock locate -> book
+  OrderStore orders_;        // order reference -> order
+  std::vector<Book> books_;  // stock locate -> book
   SymbolDirectory symbols_;
   std::size_t peak_order_count_ = 0;
   std::uint64_t errors_ = 0;
