@@ -737,13 +737,19 @@ class BookTest : public ::testing::Test {};
 template <class Book>
 class BookDeathTest : public ::testing::Test {};
 
-using BookTypes = ::testing::Types<itchbook::BookV1, itchbook::BookV2>;
+using BookTypes = ::testing::Types<itchbook::BookV1, itchbook::BookV2, itchbook::BookV2Std>;
 
 // Names the runs "v1" and "v2" in test output instead of the full type names.
 struct BookNames {
   template <class Book>
   static std::string GetName(int) {
-    return std::is_same_v<Book, itchbook::BookV1> ? "v1" : "v2";
+    if constexpr (std::is_same_v<Book, itchbook::BookV1>) {
+      return "v1";
+    } else if constexpr (std::is_same_v<Book, itchbook::BookV2Std>) {
+      return "v2_std";
+    } else {
+      return "v2";
+    }
   }
 };
 

@@ -218,7 +218,11 @@ class BasicBookV2 : public Handler {
   std::uint64_t errors_ = 0;
 };
 
-// The v2 book the tools use by default.
-using BookV2 = BasicBookV2<StdOrderStore>;
+// The v2 book the tools use: orders in a FlatMap (Step 10 task 4).
+using BookV2 = BasicBookV2<FlatMap<std::uint64_t, OrderV2>>;
+
+// The same book with std::unordered_map orders, kept so the two stores can be
+// compared from one binary (itchbook book --book v2-std).
+using BookV2Std = BasicBookV2<StdOrderStore>;
 
 }  // namespace itchbook
