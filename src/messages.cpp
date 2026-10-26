@@ -1,10 +1,10 @@
 #include "itchbook/messages.hpp"
 
 #include "itchbook/core.hpp"
+#include "itchbook/mapped_file.hpp"
 
+#include <algorithm>
 #include <cstddef>
-#include <fstream>
-#include <vector>
 
 namespace itchbook {
 
@@ -144,30 +144,33 @@ bool parse_message(const std::uint8_t* p, std::size_t length, Handler& h) {
   }
 }
 
-MessageReader::MessageReader(const std::filesystem::path& path, std::uint64_t offset)
-    : f_(open_binary(path)), offset_(offset), next_(offset) {
-  f_.seekg(static_cast<std::streamoff>(offset));
-}
+MessageReader::MessageReader(std::span<const std::uint8_t> bytes, std::uint64_t offset)
+    : bytes_(bytes),
+      offset_(std::min<std::uint64_t>(offset, bytes.size())),
+      next_(offset_) {}
 
 bool MessageReader::next() {
-  // The same walk as count_messages: 2-byte length, then that many bytes.
-  std::uint8_t b[2];
-  if (!f_.read(reinterpret_cast<char*>(b), 2)) {
+  // The same walk as Step 1: a 2-byte length, then that many bytes. The
+  // checks subtract from the size instead of adding to next_, so they cannot
+  // overflow, and next_ never passes the end.
+  const std::uint64_t left = bytes_.size() - next_;
+  if (left < 2) {
     return false;
   }
-  const std::uint16_t length = load_be16(b);
-  buf_.resize(length);
-  if (length > 0 &&
-      !f_.read(reinterpret_cast<char*>(buf_.data()), static_cast<std::streamsize>(length))) {
-    return false;
+  const std::uint16_t length = load_be16(bytes_.data() + next_);
+  if (left - 2 < length) {
+    return false;  // the file ends partway through this message
   }
   offset_ = next_;
+  data_ = bytes_.data() + next_ + 2;
+  size_ = length;
   next_ += 2 + length;
   return true;
 }
 
 void parse_file(const std::filesystem::path& path, Handler& h) {
-  MessageReader reader(path);
+  const MappedFile file(path);
+  MessageReader reader(file.bytes());
   while (!h.done() && reader.next()) {
     parse_message(reader.data(), reader.size(), h);
   }

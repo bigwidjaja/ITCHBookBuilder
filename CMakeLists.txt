@@ -21,6 +21,7 @@ add_library(itchbook_core STATIC
   src/book_v1.cpp
   src/replay.cpp
   src/snapshot.cpp
+  src/mapped_file.cpp
 )
 target_include_directories(itchbook_core PUBLIC include)
 # The Python module is a shared library, and a static library linked into a

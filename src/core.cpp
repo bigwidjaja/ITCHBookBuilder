@@ -1,5 +1,8 @@
 #include "itchbook/core.hpp"
 
+#include "itchbook/mapped_file.hpp"
+#include "itchbook/messages.hpp"
+
 #include <cstdint>
 #include <system_error>
 
@@ -59,35 +62,23 @@ MessageCounts count_messages(const std::filesystem::path& path) {
   // 256 slots, one per byte value 0..255. {} sets every count to 0.
   // 'A' is byte 65, so an add order increments by_type[65].
   MessageCounts result;
-  std::ifstream f = open_binary(path);
-  std::vector<std::uint8_t> buf;
-  std::uint8_t b[2];
-
-  while (true) {
-    if (!f.read(reinterpret_cast<char*>(b), 2)) {
-      // Zero bytes here means the file ended on a message boundary.
-      if (f.gcount() != 0) {
-        result.truncated = true;
-      }
-      break;
-    }
-    const std::uint16_t length = static_cast<std::uint16_t>((b[0] << 8) | b[1]);
-    buf.resize(length);
-    if (length > 0 &&
-        !f.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(length))) {
-      result.truncated = true;
-      break;
-    }
-    if (length == 0) {
+  // Since Step 9 this walks the mapped file instead of copying each message
+  // out of an ifstream. read_messages above keeps the Step 1 ifstream loop.
+  const MappedFile file(path);
+  MessageReader reader(file.bytes());
+  while (reader.next()) {
+    if (reader.size() == 0) {
       continue;
     }
-    result.by_type[buf[0]]++;
+    const std::uint8_t type = reader.data()[0];
+    result.by_type[type]++;
     ++result.messages;
-    const std::uint16_t expected = expected_lengths[buf[0]];
-    if (expected != 0 && expected != length) {
+    const std::uint16_t expected = expected_lengths[type];
+    if (expected != 0 && expected != reader.size()) {
       ++result.mismatches;
     }
   }
+  result.truncated = reader.truncated();
   return result;
 }
 

@@ -48,7 +48,7 @@ std::optional<MessageHeader> valid_header(const std::uint8_t* p, std::size_t siz
 
 SnapshotIndex::SnapshotIndex(std::filesystem::path path, const std::vector<std::string>& symbols,
                              std::uint64_t interval)
-    : path_(std::move(path)) {
+    : file_(path) {
   const auto start = std::chrono::steady_clock::now();
   stats_.interval = interval;
 
@@ -64,7 +64,7 @@ SnapshotIndex::SnapshotIndex(std::filesystem::path path, const std::vector<std::
     ticker.emplace(interval);
   }
 
-  MessageReader reader(path_);
+  MessageReader reader(file_.bytes());
   while (reader.next()) {
     const auto h = valid_header(reader.data(), reader.size());
     if (!h) {
@@ -146,7 +146,7 @@ void SnapshotIndex::replay(const Symbol& s, const std::vector<std::uint64_t>& ti
   }
 
   std::size_t next = 0;
-  MessageReader reader(path_, offset);
+  MessageReader reader(file_.bytes(), offset);
   while (next < times.size() && reader.next()) {
     const auto h = valid_header(reader.data(), reader.size());
     if (!h) {

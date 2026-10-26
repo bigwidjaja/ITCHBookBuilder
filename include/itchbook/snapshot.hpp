@@ -1,6 +1,7 @@
 #pragma once
 
 #include "itchbook/book_v1.hpp"
+#include "itchbook/mapped_file.hpp"
 #include "itchbook/replay.hpp"
 
 #include <array>
@@ -25,7 +26,9 @@ namespace itchbook {
 // before t and replays from that offset, applying only that symbol's messages.
 //
 // interval 0 means no snapshots: every query replays from the start of the file.
-// Queries are const and open their own reader, so threads can run them at once.
+// The file stays mapped for the index's lifetime, and snapshot offsets are
+// offsets into that mapping. Queries are const and each walks the mapping
+// with its own MessageReader, so threads can run them at once.
 class SnapshotIndex {
  public:
   struct Stats {
@@ -75,7 +78,7 @@ class SnapshotIndex {
   template <typename Sample>
   void replay(const Symbol& s, const std::vector<std::uint64_t>& times, Sample&& sample) const;
 
-  std::filesystem::path path_;
+  MappedFile file_;
   std::vector<Symbol> symbols_;
   Stats stats_;
 };

@@ -2,6 +2,7 @@
 #include "itchbook/core.hpp"
 #include "itchbook/dump.hpp"
 #include "itchbook/format.hpp"
+#include "itchbook/mapped_file.hpp"
 #include "itchbook/messages.hpp"
 #include "itchbook/replay.hpp"
 #include "itchbook/snapshot.hpp"
@@ -15,7 +16,10 @@
 #include <gtest/gtest.h>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
+
+#include <sys/resource.h>  // getrlimit
 
 TEST(Core, FileSize) {
   const auto path = std::filesystem::temp_directory_path() / "itchbook-file-size-test";
@@ -1110,19 +1114,65 @@ std::filesystem::path write_messages(const char* name,
 
 TEST(MessageReader, ReportsOffsetsAndResumes) {
   const auto path = write_messages("itchbook-reader", {blank('D'), blank('A'), blank('X')});
-  itchbook::MessageReader reader(path);
-  std::vector<std::uint64_t> offsets;
-  while (reader.next()) {
-    offsets.push_back(reader.offset());
-  }
-  // Each message is its 2-byte prefix plus its spec length: D 19, A 36, X 23.
-  EXPECT_EQ(offsets, (std::vector<std::uint64_t>{0, 21, 59}));
+  {
+    const itchbook::MappedFile file(path);
+    itchbook::MessageReader reader(file.bytes());
+    std::vector<std::uint64_t> offsets;
+    while (reader.next()) {
+      offsets.push_back(reader.offset());
+    }
+    // Each message is its 2-byte prefix plus its spec length: D 19, A 36, X 23.
+    EXPECT_EQ(offsets, (std::vector<std::uint64_t>{0, 21, 59}));
+    EXPECT_FALSE(reader.truncated());
 
-  itchbook::MessageReader resumed(path, 21);
-  ASSERT_TRUE(resumed.next());
-  EXPECT_EQ(resumed.data()[0], 'A');
-  EXPECT_EQ(resumed.size(), 36u);
-  EXPECT_EQ(resumed.offset(), 21u);
+    itchbook::MessageReader resumed(file.bytes(), 21);
+    ASSERT_TRUE(resumed.next());
+    EXPECT_EQ(resumed.data()[0], 'A');
+    EXPECT_EQ(resumed.size(), 36u);
+    EXPECT_EQ(resumed.offset(), 21u);
+    // Zero-copy: the message is the mapped bytes themselves, just past the prefix.
+    EXPECT_EQ(resumed.data(), file.data() + 21 + 2);
+  }
+  std::filesystem::remove(path);
+}
+
+TEST(MessageReader, StopsAtACutOffMessage) {
+  // A whole D, then a length prefix promising 36 bytes with only 3 behind it.
+  std::vector<std::uint8_t> bytes{0x00, 19};
+  const auto d = blank('D');
+  bytes.insert(bytes.end(), d.begin(), d.end());
+  bytes.insert(bytes.end(), {0x00, 36, 'A', 0, 0});
+
+  itchbook::MessageReader reader(bytes);
+  ASSERT_TRUE(reader.next());
+  EXPECT_EQ(reader.data()[0], 'D');
+  EXPECT_FALSE(reader.next());
+  EXPECT_TRUE(reader.truncated());
+}
+
+TEST(MessageReader, OffsetPastTheEndReadsNothing) {
+  const std::vector<std::uint8_t> bytes{0x00, 0x01, 'Z'};
+  itchbook::MessageReader reader(bytes, 1'000);
+  EXPECT_FALSE(reader.next());
+  EXPECT_FALSE(reader.truncated());
+}
+
+TEST(MappedFile, RefusesWhatIsNotARegularFile) {
+  // /dev/null, like a pipe, reports size 0: mapping it would quietly read nothing.
+  EXPECT_THROW(itchbook::MappedFile("/dev/null"), std::filesystem::filesystem_error);
+}
+
+TEST(MappedFile, ClosesItsFileDescriptor) {
+  // Map more times than this process may have files open. If the destructor
+  // leaked its descriptor, open() would start failing partway through.
+  rlimit limit{};
+  ASSERT_EQ(getrlimit(RLIMIT_NOFILE, &limit), 0);
+  const rlim_t times = std::min<rlim_t>(limit.rlim_cur, 100'000) + 100;
+  const auto path = write_bytes("itchbook-mapped-file-fd", {0x00, 0x01, 'Z'});
+  for (rlim_t i = 0; i < times; ++i) {
+    const itchbook::MappedFile file(path);
+    ASSERT_EQ(file.size(), 3u) << "after " << i << " maps";
+  }
   std::filesystem::remove(path);
 }
 
@@ -1203,4 +1253,73 @@ TEST(Core, ReadMessagesStopsWhenCutOff) {
   std::filesystem::remove(path);
 
   EXPECT_TRUE(messages.empty());
+}
+
+TEST(MappedFile, MapsTheFileBytes) {
+  const std::vector<std::uint8_t> bytes = {0x00, 0x03, 'A', 'B', 'C'};
+  const auto path = write_bytes("itchbook-mapped-file", bytes);
+  {
+    const itchbook::MappedFile file(path);
+    ASSERT_EQ(file.size(), bytes.size());
+    EXPECT_EQ(std::vector<std::uint8_t>(file.data(), file.data() + file.size()), bytes);
+  }
+  std::filesystem::remove(path);
+}
+
+TEST(MappedFile, EmptyFileHasNoBytes) {
+  const auto path = write_bytes("itchbook-mapped-file-empty", {});
+  {
+    const itchbook::MappedFile file(path);
+    EXPECT_EQ(file.size(), std::size_t{0});
+    EXPECT_EQ(file.data(), nullptr);
+  }
+  std::filesystem::remove(path);
+}
+
+TEST(MappedFile, MissingFileThrows) {
+  EXPECT_THROW(itchbook::MappedFile("itchbook-missing-file"), std::filesystem::filesystem_error);
+}
+
+// Checked by the compiler, not at run time: copying must not compile, moving
+// must, and moving must be noexcept so std::vector<MappedFile> can grow by moving.
+static_assert(!std::is_copy_constructible_v<itchbook::MappedFile>);
+static_assert(!std::is_copy_assignable_v<itchbook::MappedFile>);
+static_assert(std::is_nothrow_move_constructible_v<itchbook::MappedFile>);
+static_assert(std::is_nothrow_move_assignable_v<itchbook::MappedFile>);
+
+TEST(MappedFile, MoveConstructHandsOverTheMapping) {
+  const auto path = write_bytes("itchbook-mapped-file-move", {0x00, 0x01, 'Z'});
+  {
+    itchbook::MappedFile first(path);
+    const std::uint8_t* bytes = first.data();
+
+    itchbook::MappedFile second(std::move(first));
+    EXPECT_EQ(second.data(), bytes);  // the same mapping, not a copy of it
+    EXPECT_EQ(second.size(), 3u);
+    EXPECT_EQ(second.data()[2], 'Z');
+    EXPECT_EQ(first.data(), nullptr);  // moved-from: empty, and its destructor does nothing
+    EXPECT_EQ(first.size(), 0u);
+  }  // only second unmaps; ASan would report it if both did
+  std::filesystem::remove(path);
+}
+
+TEST(MappedFile, MoveAssignReleasesTheOldMapping) {
+  const auto path_a = write_bytes("itchbook-mapped-file-a", {'A', 'A'});
+  const auto path_b = write_bytes("itchbook-mapped-file-b", {'B', 'B', 'B'});
+  {
+    itchbook::MappedFile a(path_a);
+    itchbook::MappedFile b(path_b);
+
+    a = std::move(b);  // a's old mapping is released, then a takes b's
+    EXPECT_EQ(a.size(), 3u);
+    EXPECT_EQ(a.data()[0], 'B');
+    EXPECT_EQ(b.data(), nullptr);
+
+    auto& same = a;  // through a reference, so the compiler does not warn about self-move
+    a = std::move(same);
+    EXPECT_EQ(a.size(), 3u);  // self-move left it as it was
+    EXPECT_EQ(a.data()[0], 'B');
+  }
+  std::filesystem::remove(path_a);
+  std::filesystem::remove(path_b);
 }

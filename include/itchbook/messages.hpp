@@ -3,9 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
+#include <span>
 #include <string_view>
-#include <vector>
 
 namespace itchbook {
 
@@ -149,36 +148,42 @@ class Handler {
 // call happened. A length that does not match the spec calls nothing.
 bool parse_message(const std::uint8_t* p, std::size_t length, Handler& h);
 
-// Reads length-prefixed messages one at a time, starting at any message
-// boundary. offset() says where the current message starts, so a later
+// Walks length-prefixed messages in memory, usually a MappedFile's bytes(),
+// starting at any message boundary. Nothing is copied: data() points straight
+// into the bytes. offset() says where the current message starts, so a later
 // reader can resume at exactly that message.
 class MessageReader {
  public:
-  // Throws std::filesystem::filesystem_error if path cannot be opened.
-  explicit MessageReader(const std::filesystem::path& path, std::uint64_t offset = 0);
+  // bytes must outlive the reader. An offset past the end reads nothing.
+  explicit MessageReader(std::span<const std::uint8_t> bytes, std::uint64_t offset = 0);
 
-  // Reads the next complete message. Returns false at the end of the file or
-  // at a message cut off by it.
+  // Steps to the next complete message. Returns false at the end, or at a
+  // message cut off by the end (then truncated() is true).
   bool next();
 
   // The current message, without its length prefix: data()[0] is the type.
-  const std::uint8_t* data() const { return buf_.data(); }
-  std::size_t size() const { return buf_.size(); }
+  const std::uint8_t* data() const { return data_; }
+  std::size_t size() const { return size_; }
 
   // Byte offset of the current message's 2-byte length prefix.
   std::uint64_t offset() const { return offset_; }
 
+  // After next() returns false: whether bytes were left over that did not
+  // make a whole message.
+  bool truncated() const { return next_ < bytes_.size(); }
+
  private:
-  std::ifstream f_;
-  std::vector<std::uint8_t> buf_;
-  std::uint64_t offset_ = 0;  // the current message
-  std::uint64_t next_ = 0;    // the message after it
+  std::span<const std::uint8_t> bytes_;
+  const std::uint8_t* data_ = nullptr;  // the current message
+  std::size_t size_ = 0;
+  std::uint64_t offset_ = 0;  // where the current message starts
+  std::uint64_t next_ = 0;    // where the message after it starts
 };
 
-// Walks every message in an ITCH file and passes each one to parse_message.
-// Stops at the end of the file, at a message cut off by the end of the file,
-// or once h.done() is true. Throws std::filesystem::filesystem_error if path
-// cannot be opened.
+// Maps an ITCH file and passes each message to parse_message. Stops at the
+// end of the file, at a message cut off by the end of the file, or once
+// h.done() is true. Throws std::filesystem::filesystem_error if path cannot
+// be mapped (see MappedFile).
 void parse_file(const std::filesystem::path& path, Handler& h);
 
 }  // namespace itchbook
