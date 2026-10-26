@@ -66,6 +66,10 @@ class StdOrderStore {
   std::size_t size() const { return map_.size(); }
   void reserve(std::size_t n) { map_.reserve(n); }
 
+  // Estimate: libc++ allocates each entry as a node of about 48 bytes, plus
+  // an 8-byte bucket pointer per bucket.
+  std::size_t memory_bytes() const { return map_.size() * 48 + map_.bucket_count() * 8; }
+
  private:
   std::unordered_map<std::uint64_t, OrderV2> map_;
 };
@@ -142,6 +146,10 @@ class DirectOrderStore {
   // n counts live orders, but this array is sized by the largest reference
   // number, so there is nothing useful to reserve here.
   void reserve(std::size_t) {}
+
+  // The whole array, as allocated. Pages never written cost no physical
+  // memory, so this is an upper bound on what the array really uses.
+  std::size_t memory_bytes() const { return capacity_ * sizeof(OrderV2); }
 
  private:
   // The first allocation covers the whole day's range at once: calloc'd pages
@@ -282,6 +290,18 @@ class BasicBookV2 : public Handler {
       levels += book.bids.size() + book.asks.size();
     }
     return levels;
+  }
+
+  // Heap bytes held by the book's containers (allocated capacity, not just
+  // what is in use). The symbol directory is left out.
+  std::size_t memory_bytes() const {
+    std::size_t bytes = orders_.memory_bytes() + books_.capacity() * sizeof(Book) +
+                        pool_.capacity() * sizeof(PoolLevel) +
+                        free_levels_.capacity() * sizeof(std::uint32_t);
+    for (const Book& book : books_) {
+      bytes += (book.bids.capacity() + book.asks.capacity()) * sizeof(LevelRef);
+    }
+    return bytes;
   }
 
  private:

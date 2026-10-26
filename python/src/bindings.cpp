@@ -3,7 +3,9 @@
 // Every function copies its result into Python objects or NumPy arrays before
 // returning, so nothing in Python points into C++ memory that could be freed.
 
+#include "itchbook/book_v2.hpp"
 #include "itchbook/format.hpp"
+#include "itchbook/mapped_file.hpp"
 #include "itchbook/messages.hpp"
 #include "itchbook/replay.hpp"
 #include "itchbook/snapshot.hpp"
@@ -96,7 +98,8 @@ struct Book {
 };
 
 // BookV1 that also calls a Python function for every message. The GIL stays
-// held for the whole replay, since each message calls into Python.
+// held for the whole replay, since each message calls into Python. It stays on
+// BookV1 so Step 6's callback experiment can be repeated as it was.
 class CallbackBook : public itchbook::BookV1 {
  public:
   explicit CallbackBook(py::function fn) : fn_(std::move(fn)) {}
@@ -150,11 +153,13 @@ PYBIND11_MODULE(_itchbook, m) {
       [](const std::filesystem::path& path, const std::string& symbol, const std::string& until) {
         const std::uint64_t time = parse_time_arg(until);
         // Keep every level, so Book.top can take any depth later.
-        itchbook::BookAt book(symbol, time, std::numeric_limits<std::size_t>::max());
+        itchbook::BookAtT<itchbook::BookV2> book(symbol, time,
+                                                 std::numeric_limits<std::size_t>::max());
         {
           // The replay touches no Python objects, so other Python threads can run.
           py::gil_scoped_release release;
-          itchbook::parse_file(path, book);
+          const itchbook::MappedFile file(path);
+          itchbook::parse(file.bytes(), book);
         }
         const auto locate = book.locate();
         if (!locate) {
@@ -168,10 +173,11 @@ PYBIND11_MODULE(_itchbook, m) {
   m.def(
       "top_of_book_series",
       [](const std::filesystem::path& path, const std::string& symbol, double interval) {
-        itchbook::TopOfBookSeries series(symbol, interval_arg(interval));
+        itchbook::TopOfBookSeriesT<itchbook::BookV2> series(symbol, interval_arg(interval));
         {
           py::gil_scoped_release release;
-          itchbook::parse_file(path, series);
+          const itchbook::MappedFile file(path);
+          itchbook::parse(file.bytes(), series);
         }
         if (!series.locate()) {
           throw py::value_error("no R message names " + symbol);

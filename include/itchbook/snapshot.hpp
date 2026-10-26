@@ -1,6 +1,6 @@
 #pragma once
 
-#include "itchbook/book_v1.hpp"
+#include "itchbook/book_v2.hpp"
 #include "itchbook/mapped_file.hpp"
 #include "itchbook/replay.hpp"
 
@@ -18,7 +18,7 @@ namespace itchbook {
 // Answers "what did this stock's book look like at time t?" without replaying
 // the day from the start.
 //
-// Building it replays the file once. Each chosen symbol gets its own BookV1,
+// Building it replays the file once. Each chosen symbol gets its own BookV2,
 // fed only that symbol's messages: every ITCH message carries its stock
 // locate, so the stream splits cleanly by stock. Every `interval` of exchange
 // time it saves a copy of each of those books, live orders included, and the
@@ -36,7 +36,7 @@ class SnapshotIndex {
     std::array<std::uint64_t, 256> by_type{};
     std::uint64_t interval = 0;
     std::size_t snapshots = 0;       // across all symbols
-    std::size_t snapshot_bytes = 0;  // estimate, see snapshot_bytes() in snapshot.cpp
+    std::size_t snapshot_bytes = 0;  // BookV2::memory_bytes() of every snapshot
     double build_seconds = 0;
   };
 
@@ -61,7 +61,7 @@ class SnapshotIndex {
   struct Snapshot {
     std::uint64_t time;    // the book after every message stamped at or before this
     std::uint64_t offset;  // where the first message after `time` starts in the file
-    BookV1 book;
+    BookV2 book;
   };
 
   struct Symbol {

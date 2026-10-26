@@ -12,13 +12,6 @@ namespace itchbook {
 
 namespace {
 
-// Rough heap bytes held by one snapshot's book. libc++ allocates each
-// unordered_map entry as a 48-byte node plus about one 8-byte bucket pointer,
-// and each std::map entry as a 48-byte node. Small fixed costs are left out.
-std::size_t snapshot_bytes(const BookV1& book) {
-  return book.order_count() * (48 + 8) + book.level_count() * 48;
-}
-
 // The messages a per-symbol book applies. R is left out so that each copied
 // book's symbol directory stays empty.
 bool is_book_type(char type) {
@@ -56,7 +49,7 @@ SnapshotIndex::SnapshotIndex(std::filesystem::path path, const std::vector<std::
   for (std::size_t i = 0; i < symbols.size(); ++i) {
     chosen[i].name = symbols[i];
   }
-  std::vector<BookV1> live(symbols.size());
+  std::vector<BookV2> live(symbols.size());
   std::vector<bool> named(symbols.size(), false);
   std::vector<int> slot_of(65536, -1);  // stock locate -> index into chosen, or -1
   std::optional<Ticker> ticker;
@@ -80,7 +73,7 @@ SnapshotIndex::SnapshotIndex(std::filesystem::path path, const std::vector<std::
           if (named[i]) {
             chosen[i].snapshots.push_back({time, reader.offset(), live[i]});
             ++stats_.snapshots;
-            stats_.snapshot_bytes += snapshot_bytes(live[i]);
+            stats_.snapshot_bytes += live[i].memory_bytes();
           }
         }
       });
@@ -137,7 +130,7 @@ void SnapshotIndex::replay(const Symbol& s, const std::vector<std::uint64_t>& ti
   const auto after = std::upper_bound(
       s.snapshots.begin(), s.snapshots.end(), times.front(),
       [](std::uint64_t t, const Snapshot& snap) { return t < snap.time; });
-  BookV1 book;
+  BookV2 book;
   std::uint64_t offset = 0;
   if (after != s.snapshots.begin()) {
     const Snapshot& snap = *std::prev(after);
@@ -174,7 +167,7 @@ std::optional<BookTop> SnapshotIndex::book(std::string_view symbol, std::uint64_
     return std::nullopt;
   }
   BookTop out;
-  replay(*s, {at}, [&](std::uint64_t, const BookV1& b) { out = b.top(s->locate, depth); });
+  replay(*s, {at}, [&](std::uint64_t, const BookV2& b) { out = b.top(s->locate, depth); });
   return out;
 }
 
@@ -194,7 +187,7 @@ std::optional<TopOfBookColumns> SnapshotIndex::bbo(std::string_view symbol, std:
     times.push_back(t);
   }
   replay(*s, times,
-         [&](std::uint64_t t, const BookV1& b) { columns.add(t, b.top(s->locate, 1)); });
+         [&](std::uint64_t t, const BookV2& b) { columns.add(t, b.top(s->locate, 1)); });
   return columns;
 }
 

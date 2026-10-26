@@ -41,6 +41,9 @@ class FlatMap {
 
   std::size_t size() const { return size_; }
   std::size_t capacity() const { return slots_.size(); }
+
+  // Heap bytes held: the slot array, full or not.
+  std::size_t memory_bytes() const { return slots_.capacity() * sizeof(Slot); }
   bool empty() const { return size_ == 0; }
 
   // Makes room for n entries without growing again.

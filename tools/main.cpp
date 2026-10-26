@@ -57,6 +57,8 @@ int count_file(const std::filesystem::path& path) {
   return 0;
 }
 
+constexpr std::string_view book_names = "v1, v2, v2-std, v2-direct, v2-bsearch";
+
 int usage() {
   std::cerr << "usage: itchbook PATH\n"
             << "       itchbook count PATH\n"
@@ -65,7 +67,8 @@ int usage() {
             << "       itchbook parse PATH\n"
             << "       itchbook book PATH --symbol S --at HH:MM:SS [--depth N] [--book NAME]\n"
             << "       itchbook book PATH [--golden OUT.csv] [--book NAME] [--dispatch virtual|template]\n"
-            << "       itchbook diff PATH [--book NAME]     (compares BookV1 with NAME, default v2)\n";
+            << "       itchbook diff PATH [--book NAME]     (compares BookV1 with NAME, default v2)\n"
+            << "  --book: " << book_names << " (default v2)\n";
   return 1;
 }
 
@@ -158,9 +161,9 @@ void print_top(const itchbook::BookTop& t) {
   }
 }
 
-// The books --book can name. f is a template lambda, `[&]<class Book>() {...}`;
-// this calls it with the named book type. nullopt if no book has that name.
-constexpr std::string_view book_names = "v1, v2, v2-std, v2-direct, v2-bsearch";
+// The books --book can name; with_book below turns a name into a type.
+// f is a template lambda, `[&]<class Book>() {...}`, and with_book calls it
+// with the named book type, or returns nullopt if no book has that name.
 
 template <class F>
 std::optional<int> with_book(std::string_view name, F&& f) {
@@ -322,7 +325,7 @@ int book_file(int argc, char** argv) {
   std::optional<std::uint64_t> time;
   std::uint64_t depth = 5;
   std::string golden_path;
-  std::string_view book = "v1";
+  std::string_view book = "v2";
   bool virtual_calls = false;
   for (int i = 3; i < argc; i += 2) {
     if (i + 1 >= argc) {
