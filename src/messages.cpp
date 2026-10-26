@@ -105,43 +105,10 @@ OrderReplace decode_order_replace(const std::uint8_t* p) {
   };
 }
 
+// The virtual version: dispatch with H = Handler, so each call goes through
+// the vtable. One switch serves both paths.
 bool parse_message(const std::uint8_t* p, std::size_t length, Handler& h) {
-  // Types we do not decode have expected length 0, so this also rejects them.
-  if (length == 0 || length != expected_lengths[p[0]]) {
-    return false;
-  }
-  // Every spec message is at least 12 bytes, so the 11-byte header is there.
-  // The decoders below read the header again; that is fine for now.
-  h.on_message(decode_header(p));
-  switch (p[0]) {
-    case 'S':
-      h.on_system_event(decode_system_event(p));
-      return true;
-    case 'R':
-      h.on_stock_directory(decode_stock_directory(p));
-      return true;
-    case 'A':
-    case 'F':
-      h.on_add(decode_add_order(p));
-      return true;
-    case 'E':
-      h.on_execute(decode_order_executed(p));
-      return true;
-    case 'C':
-      h.on_execute_with_price(decode_order_executed_with_price(p));
-      return true;
-    case 'X':
-      h.on_cancel(decode_order_cancel(p));
-      return true;
-    case 'D':
-      h.on_delete(decode_order_delete(p));
-      return true;
-    case 'U':
-      h.on_replace(decode_order_replace(p));
-      return true;
-    default:
-      return false;
-  }
+  return dispatch(p, length, h);
 }
 
 MessageReader::MessageReader(std::span<const std::uint8_t> bytes, std::uint64_t offset)

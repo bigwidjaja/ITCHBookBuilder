@@ -1638,3 +1638,84 @@ TYPED_TEST(DiffAgainstV1, RandomStreamMatchesV1) {
   EXPECT_EQ(diff.a().errors(), 0u);  // the stream really is valid
   EXPECT_EQ(diff.b().errors(), 0u);
 }
+
+namespace {
+
+// No Handler base and no virtual functions: it satisfies MessageHandler just
+// by having the functions, which is all parse<H> needs.
+struct PlainCounter {
+  int messages = 0;
+  int adds = 0;
+  int deletes = 0;
+  void on_message(const itchbook::MessageHeader&) { ++messages; }
+  void on_system_event(const itchbook::SystemEvent&) {}
+  void on_stock_directory(const itchbook::StockDirectory&) {}
+  void on_add(const itchbook::AddOrder&) { ++adds; }
+  void on_execute(const itchbook::OrderExecuted&) {}
+  void on_execute_with_price(const itchbook::OrderExecutedWithPrice&) {}
+  void on_cancel(const itchbook::OrderCancel&) {}
+  void on_delete(const itchbook::OrderDelete&) { ++deletes; }
+  void on_replace(const itchbook::OrderReplace&) {}
+  bool done() const { return false; }
+};
+
+// Missing on_delete, so it must not satisfy the concept.
+struct NoDelete {
+  void on_message(const itchbook::MessageHeader&) {}
+  void on_system_event(const itchbook::SystemEvent&) {}
+  void on_stock_directory(const itchbook::StockDirectory&) {}
+  void on_add(const itchbook::AddOrder&) {}
+  void on_execute(const itchbook::OrderExecuted&) {}
+  void on_execute_with_price(const itchbook::OrderExecutedWithPrice&) {}
+  void on_cancel(const itchbook::OrderCancel&) {}
+  void on_replace(const itchbook::OrderReplace&) {}
+  bool done() const { return false; }
+};
+
+}  // namespace
+
+static_assert(itchbook::MessageHandler<PlainCounter>);
+static_assert(itchbook::MessageHandler<itchbook::Handler>);
+static_assert(itchbook::MessageHandler<itchbook::BookV2>);
+static_assert(!itchbook::MessageHandler<NoDelete>);
+static_assert(!itchbook::MessageHandler<int>);
+
+TEST(StaticDispatch, PlainStructParses) {
+  std::vector<std::uint8_t> bytes;
+  for (const auto& m : {add(1, 'B', 10, 100, 13), add(2, 'S', 5, 101, 13), remove(1)}) {
+    bytes.push_back(0x00);
+    bytes.push_back(static_cast<std::uint8_t>(m.size()));
+    bytes.insert(bytes.end(), m.begin(), m.end());
+  }
+  PlainCounter counter;
+  itchbook::parse(bytes, counter);
+  EXPECT_EQ(counter.messages, 3);
+  EXPECT_EQ(counter.adds, 2);
+  EXPECT_EQ(counter.deletes, 1);
+}
+
+TEST(StaticDispatch, TemplateAndVirtualPathsAgree) {
+  std::vector<std::uint8_t> bytes;
+  for (const auto& m : random_stream(20'000, 7)) {
+    bytes.push_back(static_cast<std::uint8_t>(m.size() >> 8));
+    bytes.push_back(static_cast<std::uint8_t>(m.size() & 0xFF));
+    bytes.insert(bytes.end(), m.begin(), m.end());
+  }
+  itchbook::CheckedReplayT<itchbook::BookV2> by_template;
+  itchbook::parse(bytes, by_template);
+
+  itchbook::CheckedReplayT<itchbook::BookV2> by_virtual;
+  itchbook::Handler& base = by_virtual;
+  itchbook::MessageReader reader(bytes);
+  while (reader.next()) {
+    itchbook::parse_message(reader.data(), reader.size(), base);
+  }
+
+  EXPECT_EQ(by_template.messages(), 20'000u);
+  EXPECT_EQ(by_template.messages(), by_virtual.messages());
+  EXPECT_EQ(by_template.order_count(), by_virtual.order_count());
+  for (std::uint16_t locate = 1; locate <= 3; ++locate) {
+    EXPECT_EQ(by_template.top(locate, 10).bids, by_virtual.top(locate, 10).bids);
+    EXPECT_EQ(by_template.top(locate, 10).asks, by_virtual.top(locate, 10).asks);
+  }
+}

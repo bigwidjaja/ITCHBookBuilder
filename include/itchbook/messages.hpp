@@ -1,5 +1,8 @@
 #pragma once
 
+#include "itchbook/core.hpp"
+
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -185,5 +188,88 @@ class MessageReader {
 // h.done() is true. Throws std::filesystem::filesystem_error if path cannot
 // be mapped (see MappedFile).
 void parse_file(const std::filesystem::path& path, Handler& h);
+
+// --- Static dispatch (Step 12) ---------------------------------------------
+//
+// parse_message above takes a Handler&, so every h.on_add(...) is a virtual
+// call: looked up at run time, and impossible for the compiler to inline. The
+// templates below take the handler's real type H instead. When H is known
+// exactly (a class marked `final`, or one with no virtual functions at all),
+// the compiler calls H's functions directly and can inline them into the
+// parse loop.
+
+// What parse needs from a handler. A concept is a named list of requirements
+// on a type: a type without, say, on_delete fails with an error naming this
+// concept, not a page of template errors. Handler and everything derived from
+// it satisfies it, and so does a plain struct with these functions.
+template <class H>
+concept MessageHandler =
+    requires(H& h, const MessageHeader& header, const SystemEvent& system_event,
+             const StockDirectory& directory, const AddOrder& add, const OrderExecuted& execute,
+             const OrderExecutedWithPrice& execute_with_price, const OrderCancel& cancel,
+             const OrderDelete& del, const OrderReplace& replace) {
+      h.on_message(header);
+      h.on_system_event(system_event);
+      h.on_stock_directory(directory);
+      h.on_add(add);
+      h.on_execute(execute);
+      h.on_execute_with_price(execute_with_price);
+      h.on_cancel(cancel);
+      h.on_delete(del);
+      h.on_replace(replace);
+      { h.done() } -> std::convertible_to<bool>;
+    };
+
+// parse_message for any MessageHandler. With H = Handler this is exactly the
+// virtual parse_message; with a final H the calls are direct.
+template <MessageHandler H>
+bool dispatch(const std::uint8_t* p, std::size_t length, H& h) {
+  // Types we do not decode have expected length 0, so this also rejects them.
+  if (length == 0 || length != expected_lengths[p[0]]) {
+    return false;
+  }
+  // Every spec message is at least 12 bytes, so the 11-byte header is there.
+  h.on_message(decode_header(p));
+  switch (p[0]) {
+    case 'S':
+      h.on_system_event(decode_system_event(p));
+      return true;
+    case 'R':
+      h.on_stock_directory(decode_stock_directory(p));
+      return true;
+    case 'A':
+    case 'F':
+      h.on_add(decode_add_order(p));
+      return true;
+    case 'E':
+      h.on_execute(decode_order_executed(p));
+      return true;
+    case 'C':
+      h.on_execute_with_price(decode_order_executed_with_price(p));
+      return true;
+    case 'X':
+      h.on_cancel(decode_order_cancel(p));
+      return true;
+    case 'D':
+      h.on_delete(decode_order_delete(p));
+      return true;
+    case 'U':
+      h.on_replace(decode_order_replace(p));
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Walks every message in bytes and dispatches it to h, until the end or
+// h.done(). The static-dispatch version of parse_file, over bytes already in
+// memory (a MappedFile's bytes(), usually).
+template <MessageHandler H>
+void parse(std::span<const std::uint8_t> bytes, H& h) {
+  MessageReader reader(bytes);
+  while (!h.done() && reader.next()) {
+    dispatch(reader.data(), reader.size(), h);
+  }
+}
 
 }  // namespace itchbook

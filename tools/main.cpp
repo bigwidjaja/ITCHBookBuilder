@@ -1,6 +1,7 @@
 #include "itchbook/core.hpp"
 #include "itchbook/dump.hpp"
 #include "itchbook/format.hpp"
+#include "itchbook/mapped_file.hpp"
 #include "itchbook/book_v2.hpp"
 #include "itchbook/replay.hpp"
 #include "itchbook/stats.hpp"
@@ -63,7 +64,7 @@ int usage() {
             << "       itchbook stats PATH\n"
             << "       itchbook parse PATH\n"
             << "       itchbook book PATH --symbol S --at HH:MM:SS [--depth N] [--book NAME]\n"
-            << "       itchbook book PATH [--golden OUT.csv] [--book NAME]\n"
+            << "       itchbook book PATH [--golden OUT.csv] [--book NAME] [--dispatch virtual|template]\n"
             << "       itchbook diff PATH [--book NAME]     (compares BookV1 with NAME, default v2)\n";
   return 1;
 }
@@ -192,12 +193,26 @@ void reserve_for_day(Book& book) {
   }
 }
 
+// Runs every message of the file through h. With virtual_calls, through
+// parse_file and a Handler& (a virtual call per message, Step 2's way);
+// otherwise through parse<H> on h's real type, which the compiler can call
+// directly and inline when H is final (Step 12). Same results either way.
+template <class H>
+void run(const std::filesystem::path& path, H& h, bool virtual_calls) {
+  if (virtual_calls) {
+    itchbook::parse_file(path, static_cast<itchbook::Handler&>(h));
+  } else {
+    const itchbook::MappedFile file(path);
+    itchbook::parse(file.bytes(), h);
+  }
+}
+
 template <class Book>
 int book_at(const std::filesystem::path& path, const std::string& symbol, std::uint64_t time,
-            std::size_t depth) {
+            std::size_t depth, bool virtual_calls) {
   itchbook::BookAtT<Book> book(symbol, time, depth);
   reserve_for_day(book);
-  itchbook::parse_file(path, book);
+  run(path, book, virtual_calls);
   const auto locate = book.locate();
   if (!locate) {
     std::cerr << "no R message names " << symbol << '\n';
@@ -209,42 +224,26 @@ int book_at(const std::filesystem::path& path, const std::string& symbol, std::u
   return 0;
 }
 
-// Replays the whole file and reports on it. With a golden path, also writes
-// the golden CSV.
-template <class Book>
-int book_replay(const std::filesystem::path& path, const std::string& golden_path) {
-  std::ofstream golden;
-  std::unique_ptr<itchbook::CheckedBookT<Book>> book;
-  const itchbook::GoldenWriterT<Book>* writer = nullptr;
-  if (golden_path.empty()) {
-    book = std::make_unique<itchbook::CheckedBookT<Book>>();
-  } else {
-    golden.open(golden_path);
-    if (!golden) {
-      std::cerr << "cannot write " << golden_path << '\n';
-      return 1;
-    }
-    auto w = std::make_unique<itchbook::GoldenWriterT<Book>>(golden, golden_symbols, golden_depth);
-    writer = w.get();
-    book = std::move(w);
-  }
-
-  reserve_for_day(*book);
+// Replays the whole file through book (a CheckedReplayT or GoldenWriterT) and
+// prints the report.
+template <class Checked>
+void replay_and_report(const std::filesystem::path& path, Checked& book, bool virtual_calls) {
+  reserve_for_day(book);
   const auto start = std::chrono::steady_clock::now();
-  itchbook::parse_file(path, *book);
+  run(path, book, virtual_calls);
   const double seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-  const double msg_per_s = seconds > 0 ? static_cast<double>(book->messages()) / seconds : 0;
+  const double msg_per_s = seconds > 0 ? static_cast<double>(book.messages()) / seconds : 0;
 
-  std::cout << "messages: " << book->messages() << '\n';
+  std::cout << "messages: " << book.messages() << '\n';
   std::cout << std::format("seconds: {:.3f}\n", seconds);
   std::cout << std::format("msg_per_s: {:.0f}\n", msg_per_s);
-  std::cout << "errors: " << book->errors() << '\n';
-  std::cout << "live orders at end: " << book->order_count() << '\n';
-  std::cout << "peak live orders: " << book->peak_order_count() << '\n';
-  std::cout << "market hours locked moments: " << book->locked_moments() << '\n';
-  std::cout << "market hours crossed moments: " << book->crossed_moments() << '\n';
-  const auto worst = book->worst(10);
+  std::cout << "errors: " << book.errors() << '\n';
+  std::cout << "live orders at end: " << book.order_count() << '\n';
+  std::cout << "peak live orders: " << book.peak_order_count() << '\n';
+  std::cout << "market hours locked moments: " << book.locked_moments() << '\n';
+  std::cout << "market hours crossed moments: " << book.crossed_moments() << '\n';
+  const auto worst = book.worst(10);
   if (!worst.empty()) {
     std::cout << "\nmost locked or crossed:\n";
     std::cout << std::format("  {:<8} {:>8} {:>8}  {:<18}  {:<18}\n", "symbol", "locked", "crossed",
@@ -255,9 +254,27 @@ int book_replay(const std::filesystem::path& path, const std::string& golden_pat
                                itchbook::format_timestamp(p.last_time));
     }
   }
-  if (writer != nullptr) {
-    std::cout << "\ngolden: " << writer->rows() << " rows in " << golden_path << '\n';
+}
+
+// Replays the whole file and reports on it. With a golden path, also writes
+// the golden CSV. Each branch uses its own final type, so the template path
+// can call the book directly.
+template <class Book>
+int book_replay(const std::filesystem::path& path, const std::string& golden_path,
+                bool virtual_calls) {
+  if (golden_path.empty()) {
+    auto book = std::make_unique<itchbook::CheckedReplayT<Book>>();
+    replay_and_report(path, *book, virtual_calls);
+    return 0;
   }
+  std::ofstream golden(golden_path);
+  if (!golden) {
+    std::cerr << "cannot write " << golden_path << '\n';
+    return 1;
+  }
+  auto writer = std::make_unique<itchbook::GoldenWriterT<Book>>(golden, golden_symbols, golden_depth);
+  replay_and_report(path, *writer, virtual_calls);
+  std::cout << "\ngolden: " << writer->rows() << " rows in " << golden_path << '\n';
   return 0;
 }
 
@@ -267,7 +284,7 @@ template <class Book>
 int diff_file(const std::filesystem::path& path) {
   auto diff = std::make_unique<itchbook::DiffBooks<itchbook::BookV1, Book>>();
   const auto start = std::chrono::steady_clock::now();
-  itchbook::parse_file(path, *diff);
+  run(path, *diff, false);
   const double seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 
@@ -306,6 +323,7 @@ int book_file(int argc, char** argv) {
   std::uint64_t depth = 5;
   std::string golden_path;
   std::string_view book = "v1";
+  bool virtual_calls = false;
   for (int i = 3; i < argc; i += 2) {
     if (i + 1 >= argc) {
       return usage();
@@ -314,6 +332,12 @@ int book_file(int argc, char** argv) {
     const std::string_view value = argv[i + 1];
     if (flag == "--book") {
       book = value;
+    } else if (flag == "--dispatch") {
+      if (value != "virtual" && value != "template") {
+        std::cerr << "--dispatch must be virtual or template\n";
+        return 1;
+      }
+      virtual_calls = value == "virtual";
     } else if (flag == "--symbol") {
       symbol = value;
     } else if (flag == "--at") {
@@ -338,8 +362,8 @@ int book_file(int argc, char** argv) {
     return usage();  // --symbol and --at go together, and not with --golden
   }
   const auto result = with_book(book, [&]<class Book>() {
-    return time ? book_at<Book>(argv[2], symbol, *time, depth)
-                : book_replay<Book>(argv[2], golden_path);
+    return time ? book_at<Book>(argv[2], symbol, *time, depth, virtual_calls)
+                : book_replay<Book>(argv[2], golden_path, virtual_calls);
   });
   if (!result) {
     std::cerr << "--book must be one of: " << book_names << '\n';

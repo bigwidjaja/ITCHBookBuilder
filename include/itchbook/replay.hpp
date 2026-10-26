@@ -54,6 +54,14 @@ class Ticker {
 // this->top(...). Book is a template parameter, so the compiler cannot look
 // names up in it until it knows which book it is; `this->` tells it to wait.
 
+// `final` on a class (or a function) says nothing can inherit from it (or
+// override it again). Then, when parse<H> is given the exact type, the
+// compiler knows which function every call reaches and can call it directly
+// and inline it, instead of looking it up at run time (Step 12). The tools
+// below are final where they can be; CheckedBookT cannot, since GoldenWriterT
+// builds on it, so its book functions are final and CheckedReplayT is the
+// final version for a plain replay.
+
 // A book plus checks from the outside. Counts every message, and after each
 // book message checks that stock's book. A locked or crossed book during
 // market hours counts as one "moment": normal continuous trading should never
@@ -73,27 +81,27 @@ class CheckedBookT : public Book {
   void on_message(const MessageHeader&) override { ++messages_; }
 
   // Each book message is applied first, then the stock it touched is checked.
-  void on_add(const AddOrder& m) override {
+  void on_add(const AddOrder& m) override final {
     Book::on_add(m);
     check(m.header);
   }
-  void on_execute(const OrderExecuted& m) override {
+  void on_execute(const OrderExecuted& m) override final {
     Book::on_execute(m);
     check(m.header);
   }
-  void on_execute_with_price(const OrderExecutedWithPrice& m) override {
+  void on_execute_with_price(const OrderExecutedWithPrice& m) override final {
     Book::on_execute_with_price(m);
     check(m.header);
   }
-  void on_cancel(const OrderCancel& m) override {
+  void on_cancel(const OrderCancel& m) override final {
     Book::on_cancel(m);
     check(m.header);
   }
-  void on_delete(const OrderDelete& m) override {
+  void on_delete(const OrderDelete& m) override final {
     Book::on_delete(m);
     check(m.header);
   }
-  void on_replace(const OrderReplace& m) override {
+  void on_replace(const OrderReplace& m) override final {
     Book::on_replace(m);
     check(m.header);
   }
@@ -155,10 +163,14 @@ class CheckedBookT : public Book {
   std::unordered_map<std::uint16_t, Problem> problems_;  // stock locate -> its moments
 };
 
+// CheckedBookT with nothing more, marked final: what a plain full replay uses.
+template <class Book>
+class CheckedReplayT final : public CheckedBookT<Book> {};
+
 // Replays up to a time and keeps one stock's top levels as they stood then:
 // after every message stamped at or before `time`, and none after.
 template <class Book>
-class BookAtT : public Book {
+class BookAtT final : public Book {
  public:
   BookAtT(std::string symbol, std::uint64_t time, std::size_t depth)
       : symbol_(std::move(symbol)), time_(time), depth_(depth) {}
@@ -196,7 +208,7 @@ class BookAtT : public Book {
 //   time,symbol,bid_price_1,bid_shares_1,...,ask_price_1,ask_shares_1,...
 // Missing levels are left empty.
 template <class Book>
-class GoldenWriterT : public CheckedBookT<Book> {
+class GoldenWriterT final : public CheckedBookT<Book> {
  public:
   static constexpr std::uint64_t default_interval = 60'000'000'000;  // 60 seconds
 
@@ -264,7 +276,7 @@ struct TopOfBookColumns {
 // Replays the whole file and samples one stock's best bid and ask at every
 // tick of a Ticker.
 template <class Book>
-class TopOfBookSeriesT : public Book {
+class TopOfBookSeriesT final : public Book {
  public:
   TopOfBookSeriesT(std::string symbol, std::uint64_t interval)
       : symbol_(std::move(symbol)), ticker_(interval) {}
@@ -294,7 +306,7 @@ class TopOfBookSeriesT : public Book {
 // This checks every stock at every message, where the golden file checks 5
 // stocks once a minute. A and B only need BookV1's interface.
 template <class A, class B>
-class DiffBooks : public Handler {
+class DiffBooks final : public Handler {
  public:
   explicit DiffBooks(std::size_t depth = 5) : depth_(depth) {}
 
@@ -346,6 +358,7 @@ class DiffBooks : public Handler {
 
 // The BookV1 versions, under the names the rest of the code has always used.
 using CheckedBook = CheckedBookT<BookV1>;
+using CheckedReplay = CheckedReplayT<BookV1>;
 using BookAt = BookAtT<BookV1>;
 using GoldenWriter = GoldenWriterT<BookV1>;
 using TopOfBookSeries = TopOfBookSeriesT<BookV1>;
