@@ -1,6 +1,7 @@
 #include "itchbook/book_v1.hpp"
 #include "itchbook/core.hpp"
 #include "itchbook/dump.hpp"
+#include "itchbook/flat_map.hpp"
 #include "itchbook/format.hpp"
 #include "itchbook/mapped_file.hpp"
 #include "itchbook/messages.hpp"
@@ -10,13 +11,16 @@
 #include "itchbook/symbols.hpp"
 
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <random>
 #include <sstream>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #include <sys/resource.h>  // getrlimit
@@ -1322,4 +1326,108 @@ TEST(MappedFile, MoveAssignReleasesTheOldMapping) {
   }
   std::filesystem::remove(path_a);
   std::filesystem::remove(path_b);
+}
+
+TEST(FlatMap, InsertFindErase) {
+  itchbook::FlatMap<std::uint64_t, int> map;
+  EXPECT_TRUE(map.empty());
+  EXPECT_TRUE(map.insert(42, 1));
+  EXPECT_FALSE(map.insert(42, 2));  // already there: unchanged, like emplace
+  ASSERT_NE(map.find(42), nullptr);
+  EXPECT_EQ(*map.find(42), 1);
+  EXPECT_EQ(map.find(7), nullptr);
+
+  *map.find(42) = 5;  // find gives a pointer to the stored value
+  EXPECT_EQ(*map.find(42), 5);
+
+  EXPECT_TRUE(map.erase(42));
+  EXPECT_FALSE(map.erase(42));
+  EXPECT_EQ(map.find(42), nullptr);
+  EXPECT_EQ(map.size(), 0u);
+}
+
+TEST(FlatMap, GrowsAndStaysAtMostHalfFull) {
+  itchbook::FlatMap<std::uint64_t, std::uint64_t> map;
+  for (std::uint64_t k = 1; k <= 100'000; ++k) {
+    ASSERT_TRUE(map.insert(k, k * 3));
+    ASSERT_LE(map.size() * 2, map.capacity());
+  }
+  for (std::uint64_t k = 1; k <= 100'000; ++k) {
+    ASSERT_NE(map.find(k), nullptr) << k;
+    ASSERT_EQ(*map.find(k), k * 3);
+  }
+  EXPECT_EQ(std::popcount(map.capacity()), 1);  // always a power of two
+}
+
+TEST(FlatMap, ReserveAvoidsGrowing) {
+  itchbook::FlatMap<std::uint64_t, int> map;
+  map.reserve(1'000);
+  const std::size_t capacity = map.capacity();
+  EXPECT_GE(capacity, 2'000u);
+  for (std::uint64_t k = 0; k < 1'000; ++k) {
+    map.insert(k, 0);
+  }
+  EXPECT_EQ(map.capacity(), capacity);
+}
+
+TEST(FlatMap, EraseKeepsCollidingKeysReachable) {
+  // A tiny table that never grows, so keys collide and runs wrap past the end
+  // of the array. Erasing from the middle of a run must not hide anything after it.
+  itchbook::FlatMap<std::uint64_t, std::uint64_t> map;  // 16 slots
+  std::vector<std::uint64_t> keys;
+  // Keys whose home is slot 15, the last one (the top 4 bits of the hash, as
+  // FlatMap computes it for 16 slots), so their run wraps around to slot 0.
+  for (std::uint64_t k = 1; keys.size() < 8; ++k) {
+    if ((k * 0x9E3779B97F4A7C15ull) >> 60 == 15) {
+      keys.push_back(k);
+      map.insert(k, k);
+    }
+  }
+  ASSERT_EQ(map.capacity(), 16u);
+  for (std::size_t i = 0; i < keys.size(); i += 2) {
+    ASSERT_TRUE(map.erase(keys[i]));
+    for (std::size_t j = 0; j < keys.size(); ++j) {
+      const bool erased = j % 2 == 0 && j <= i;
+      EXPECT_EQ(map.find(keys[j]) == nullptr, erased) << "key " << keys[j] << " after erasing "
+                                                      << keys[i];
+    }
+  }
+}
+
+// The differential test: the same 10 million random operations on FlatMap and
+// on std::unordered_map, which we trust. Every answer must match. Keys come
+// from a small range, so the table keeps filling, growing, colliding and
+// emptying.
+TEST(FlatMap, MatchesUnorderedMapOnTenMillionRandomOps) {
+  itchbook::FlatMap<std::uint64_t, std::uint64_t> flat;
+  std::unordered_map<std::uint64_t, std::uint64_t> reference;
+  std::mt19937_64 rng(2019'12'30);
+  std::uniform_int_distribution<std::uint64_t> any_key(0, (1u << 18) - 1);
+  std::uniform_int_distribution<int> any_op(0, 99);
+
+  for (int step = 0; step < 10'000'000; ++step) {
+    const std::uint64_t key = any_key(rng);
+    const int op = any_op(rng);
+    if (op < 40) {
+      const std::uint64_t value = rng();
+      const bool want = reference.emplace(key, value).second;
+      ASSERT_EQ(flat.insert(key, value), want) << "insert " << key << " at step " << step;
+    } else if (op < 75) {
+      const bool want = reference.erase(key) == 1;
+      ASSERT_EQ(flat.erase(key), want) << "erase " << key << " at step " << step;
+    } else {
+      const auto it = reference.find(key);
+      const std::uint64_t* got = flat.find(key);
+      ASSERT_EQ(got != nullptr, it != reference.end()) << "find " << key << " at step " << step;
+      if (got != nullptr) {
+        ASSERT_EQ(*got, it->second) << "value of " << key << " at step " << step;
+      }
+    }
+    ASSERT_EQ(flat.size(), reference.size()) << "at step " << step;
+  }
+  // Finally every surviving key, both ways.
+  for (const auto& [key, value] : reference) {
+    ASSERT_NE(flat.find(key), nullptr);
+    ASSERT_EQ(*flat.find(key), value);
+  }
 }
