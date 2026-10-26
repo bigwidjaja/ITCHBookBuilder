@@ -738,7 +738,8 @@ template <class Book>
 class BookDeathTest : public ::testing::Test {};
 
 using BookTypes =
-    ::testing::Types<itchbook::BookV1, itchbook::BookV2, itchbook::BookV2Std, itchbook::BookV2Direct>;
+    ::testing::Types<itchbook::BookV1, itchbook::BookV2, itchbook::BookV2Std, itchbook::BookV2Direct,
+                     itchbook::BookV2BinarySearch>;
 
 // Names the runs "v1" and "v2" in test output instead of the full type names.
 struct BookNames {
@@ -750,6 +751,8 @@ struct BookNames {
       return "v2_std";
     } else if constexpr (std::is_same_v<Book, itchbook::BookV2Direct>) {
       return "v2_direct";
+    } else if constexpr (std::is_same_v<Book, itchbook::BookV2BinarySearch>) {
+      return "v2_bsearch";
     } else {
       return "v2";
     }
@@ -1526,4 +1529,19 @@ TEST(DirectOrderStore, IndexesByReference) {
   EXPECT_FALSE(store.erase(5));
   EXPECT_EQ(store.find(5), nullptr);
   EXPECT_EQ(store.size(), 1u);
+}
+
+// Both searches against each other on a side with many levels: every price,
+// present or not, must land on the same index.
+TEST(LevelSearch, ScanAndBinarySearchAgree) {
+  std::vector<itchbook::Level> bids;  // worst to best: rising prices
+  for (std::uint32_t p = 100; p <= 300; p += 10) {
+    bids.push_back({p, 1});
+  }
+  for (std::uint32_t p = 90; p <= 310; ++p) {
+    const auto scan = itchbook::ScanFromBest::find(bids, p, std::greater<>{});
+    const auto binary = itchbook::BinarySearch::find(bids, p, std::greater<>{});
+    EXPECT_EQ(scan, binary) << "price " << p;
+    EXPECT_EQ(scan.second, p % 10 == 0 && p >= 100 && p <= 300) << "price " << p;
+  }
 }

@@ -159,7 +159,7 @@ void print_top(const itchbook::BookTop& t) {
 
 // The books --book can name. f is a template lambda, `[&]<class Book>() {...}`;
 // this calls it with the named book type. nullopt if no book has that name.
-constexpr std::string_view book_names = "v1, v2, v2-std, v2-direct";
+constexpr std::string_view book_names = "v1, v2, v2-std, v2-direct, v2-bsearch";
 
 template <class F>
 std::optional<int> with_book(std::string_view name, F&& f) {
@@ -174,6 +174,9 @@ std::optional<int> with_book(std::string_view name, F&& f) {
   }
   if (name == "v2-direct") {
     return f.template operator()<itchbook::BookV2Direct>();
+  }
+  if (name == "v2-bsearch") {
+    return f.template operator()<itchbook::BookV2BinarySearch>();
   }
   return std::nullopt;
 }

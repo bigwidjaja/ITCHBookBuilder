@@ -159,7 +159,44 @@ class DirectOrderStore {
   std::size_t size_ = 0;
 };
 
-template <class OrderStore>
+// How a side's price levels are searched (Step 11 task 3). Levels are sorted
+// worst to best, so the best sits at the back; better(a, b) says whether price
+// a beats price b on this side. find returns where `price` is, or where it
+// would be inserted, as {index, found}.
+
+// Walks back from the best price. Most updates land a few levels from the
+// top, where this stops after a step or two.
+struct ScanFromBest {
+  template <class Levels, class Better>
+  static std::pair<std::size_t, bool> find(const Levels& levels, std::uint32_t price,
+                                           Better better) {
+    std::size_t i = levels.size();
+    while (i > 0 && better(levels[i - 1].price, price)) {
+      --i;
+    }
+    if (i > 0 && levels[i - 1].price == price) {
+      return {i - 1, true};
+    }
+    return {i, false};
+  }
+};
+
+// Binary search: about log2(levels) steps wherever the price is, but each
+// step jumps around the vector instead of walking it.
+struct BinarySearch {
+  template <class Levels, class Better>
+  static std::pair<std::size_t, bool> find(const Levels& levels, std::uint32_t price,
+                                           Better better) {
+    // lower_bound wants "is this level before price in the sort order", which
+    // here means "is this level worse than price".
+    const auto it = std::lower_bound(
+        levels.begin(), levels.end(), price,
+        [&](const auto& level, std::uint32_t p) { return better(p, level.price); });
+    return {static_cast<std::size_t>(it - levels.begin()), it != levels.end() && it->price == price};
+  }
+};
+
+template <class OrderStore, class LevelSearch = ScanFromBest>
 class BasicBookV2 : public Handler {
  public:
   void on_stock_directory(const StockDirectory& m) override {
@@ -216,8 +253,8 @@ class BasicBookV2 : public Handler {
     if (book == nullptr || book->bids.empty() || book->asks.empty()) {
       return BookState::Normal;
     }
-    const std::uint32_t best_bid = book->bids.begin()->first;
-    const std::uint32_t best_ask = book->asks.begin()->first;
+    const std::uint32_t best_bid = book->bids.back().price;  // the best is at the back
+    const std::uint32_t best_ask = book->asks.back().price;
     if (best_bid == best_ask) {
       return BookState::Locked;
     }
@@ -242,10 +279,18 @@ class BasicBookV2 : public Handler {
   }
 
  private:
+  // Each side is sorted worst to best, so the best level is at the back: bids
+  // by rising price, asks by falling price. Most updates are near the best
+  // price, so inserts and erases there move few elements, and neighboring
+  // levels share cache lines instead of being separate tree nodes.
   struct Book {
-    std::map<std::uint32_t, std::uint64_t, std::greater<>> bids;  // price -> total shares, best first
-    std::map<std::uint32_t, std::uint64_t> asks;                   // price -> total shares, best first
+    std::vector<Level> bids;
+    std::vector<Level> asks;
   };
+
+  // "a is a better price than b" on each side.
+  using BidBetter = std::greater<>;
+  using AskBetter = std::less<>;
 
   // books_ is indexed by stock locate: locates are small and have no gaps
   // (1 to 8,906 on 2019-12-30), so an index replaces a hash lookup.
@@ -268,9 +313,9 @@ class BasicBookV2 : public Handler {
     peak_order_count_ = std::max(peak_order_count_, orders_.size());
     Book& book = book_for(order.locate);
     if (order.side == Side::Buy) {
-      book.bids[order.price] += order.shares;
+      add_to(book.bids, order.price, order.shares, BidBetter{});
     } else {
-      book.asks[order.price] += order.shares;
+      add_to(book.asks, order.price, order.shares, AskBetter{});
     }
   }
 
@@ -291,34 +336,43 @@ class BasicBookV2 : public Handler {
   void remove_from_level(const OrderV2& order, std::uint32_t shares) {
     Book& book = book_for(order.locate);
     if (order.side == Side::Buy) {
-      subtract(book.bids, order.price, shares);
+      subtract(book.bids, order.price, shares, BidBetter{});
     } else {
-      subtract(book.asks, order.price, shares);
+      subtract(book.asks, order.price, shares, AskBetter{});
     }
   }
 
-  template <typename Levels>
-  static void subtract(Levels& levels, std::uint32_t price, std::uint64_t shares) {
-    const auto it = levels.find(price);
-    assert(it != levels.end());
-    if (it == levels.end()) {
+  template <class Better>
+  static void add_to(std::vector<Level>& levels, std::uint32_t price, std::uint64_t shares,
+                     Better better) {
+    const auto [i, found] = LevelSearch::find(levels, price, better);
+    if (found) {
+      levels[i].shares += shares;
+    } else {
+      levels.insert(levels.begin() + static_cast<std::ptrdiff_t>(i), Level{price, shares});
+    }
+  }
+
+  template <class Better>
+  static void subtract(std::vector<Level>& levels, std::uint32_t price, std::uint64_t shares,
+                       Better better) {
+    const auto [i, found] = LevelSearch::find(levels, price, better);
+    assert(found);
+    if (!found) {
       return;  // only possible if the invariants are already broken
     }
-    assert(shares <= it->second);
-    it->second -= shares;
-    if (it->second == 0) {
-      levels.erase(it);
+    assert(shares <= levels[i].shares);
+    levels[i].shares -= shares;
+    if (levels[i].shares == 0) {
+      levels.erase(levels.begin() + static_cast<std::ptrdiff_t>(i));
     }
   }
 
-  template <typename Levels>
-  static std::vector<Level> first_levels(const Levels& levels, std::size_t depth) {
+  // The best depth levels, best first: walk from the back.
+  static std::vector<Level> first_levels(const std::vector<Level>& levels, std::size_t depth) {
     std::vector<Level> out;
-    for (const auto& [price, shares] : levels) {
-      if (out.size() == depth) {
-        break;
-      }
-      out.push_back({price, shares});
+    for (auto it = levels.rbegin(); it != levels.rend() && out.size() < depth; ++it) {
+      out.push_back(*it);
     }
     return out;
   }
@@ -339,5 +393,9 @@ using BookV2Std = BasicBookV2<StdOrderStore>;
 
 // The direct-array experiment (itchbook book --book v2-direct).
 using BookV2Direct = BasicBookV2<DirectOrderStore>;
+
+// BookV2 with binary search instead of scanning from the best price
+// (itchbook book --book v2-bsearch).
+using BookV2BinarySearch = BasicBookV2<FlatMap<std::uint64_t, OrderV2>, BinarySearch>;
 
 }  // namespace itchbook
