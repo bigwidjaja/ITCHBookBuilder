@@ -40,14 +40,19 @@ namespace itchbook {
 // to grow (and rehash every live order) partway through the day.
 inline constexpr std::size_t day_peak_live_orders = 1'924'078;
 
-// One live order.
+// One live order, kept small because there are up to 1.9M of them (Step 11
+// task 5). It has no price: its level in the pool has that. Fields go largest
+// first so none needs padding before it: 4 + 4 + 2 + 1 = 11 bytes, rounded up
+// to 12 so an array of them keeps each uint32_t 4-byte aligned. The earlier
+// {locate, side, price, shares, level} was 16: a padding byte after side, and
+// a price no one read.
 struct OrderV2 {
+  std::uint32_t shares;
+  std::uint32_t level;  // pool index of its price level
   std::uint16_t locate;
   Side side;
-  std::uint32_t price;
-  std::uint32_t shares;
-  std::uint32_t level;  // pool index of its price level (Step 11 task 4)
 };
+static_assert(sizeof(OrderV2) == 12, "OrderV2 grew; check field order and types");
 
 // std::unordered_map behind the OrderStore interface: v1's order table.
 class StdOrderStore {
@@ -326,7 +331,7 @@ class BasicBookV2 : public Handler {
     // The level first, so the order can be stored with its pool index in one
     // insert. A duplicate reference (never seen in real data) undoes it.
     const std::uint32_t level = add_to_level(locate, side, price, shares);
-    const OrderV2 order{locate, side, price, shares, level};
+    const OrderV2 order{.shares = shares, .level = level, .locate = locate, .side = side};
     if (!orders_.insert(ref, order)) {
       ++errors_;  // ref is already live; its shares must not count twice
       remove_shares(order, shares);

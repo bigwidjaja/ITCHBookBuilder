@@ -1512,8 +1512,8 @@ static_assert(std::is_nothrow_move_constructible_v<itchbook::DirectOrderStore>);
 TEST(DirectOrderStore, IndexesByReference) {
   itchbook::DirectOrderStore store;
   EXPECT_EQ(store.find(5), nullptr);  // nothing allocated yet
-  EXPECT_TRUE(store.insert(5, {1, itchbook::Side::Buy, 100, 10}));
-  EXPECT_FALSE(store.insert(5, {1, itchbook::Side::Buy, 100, 10}));  // already live
+  EXPECT_TRUE(store.insert(5, {.shares = 10, .level = 7, .locate = 1, .side = itchbook::Side::Buy}));
+  EXPECT_FALSE(store.insert(5, {.shares = 10, .level = 7, .locate = 1, .side = itchbook::Side::Buy}));  // already live
   ASSERT_NE(store.find(5), nullptr);
   EXPECT_EQ(store.find(5)->shares, 10u);
   EXPECT_EQ(store.find(6), nullptr);
@@ -1521,9 +1521,9 @@ TEST(DirectOrderStore, IndexesByReference) {
 
   // Past the day's largest reference: the array grows and keeps what it had.
   const std::uint64_t far = itchbook::day_largest_order_ref + 10;
-  EXPECT_TRUE(store.insert(far, {2, itchbook::Side::Sell, 200, 3}));
+  EXPECT_TRUE(store.insert(far, {.shares = 3, .level = 9, .locate = 2, .side = itchbook::Side::Sell}));
   EXPECT_EQ(store.find(5)->shares, 10u);
-  EXPECT_EQ(store.find(far)->price, 200u);
+  EXPECT_EQ(store.find(far)->level, 9u);
 
   EXPECT_TRUE(store.erase(5));
   EXPECT_FALSE(store.erase(5));
