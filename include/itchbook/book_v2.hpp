@@ -31,6 +31,11 @@ namespace itchbook {
 // and BasicBookV2 is a template over it, so the compiler builds one book per
 // store with no virtual calls between them.
 
+// The most orders live at once on 2019-12-30, measured in Step 4. A full-day
+// replay reserves room for this many up front, so the order table never has
+// to grow (and rehash every live order) partway through the day.
+inline constexpr std::size_t day_peak_live_orders = 1'924'078;
+
 // One live order.
 struct OrderV2 {
   std::uint16_t locate;
@@ -119,6 +124,10 @@ class BasicBookV2 : public Handler {
     }
     return best_bid > best_ask ? BookState::Crossed : BookState::Normal;
   }
+
+  // Makes room for n live orders at once. Not done by default: tests and
+  // tools build many small books, and a table sized for a whole day is large.
+  void reserve_orders(std::size_t n) { orders_.reserve(n); }
 
   const SymbolDirectory& symbols() const { return symbols_; }
   std::size_t order_count() const { return orders_.size(); }

@@ -172,10 +172,22 @@ std::optional<int> with_book(std::string_view name, F&& f) {
   return std::nullopt;
 }
 
+// Sizes a book's order table for a whole day, if the book supports it.
+// `requires { ... }` asks the compiler whether that expression would compile
+// for this Book; BookV1 has no reserve_orders on purpose, so for it the call
+// is left out entirely.
+template <class Book>
+void reserve_for_day(Book& book) {
+  if constexpr (requires { book.reserve_orders(std::size_t{}); }) {
+    book.reserve_orders(itchbook::day_peak_live_orders);
+  }
+}
+
 template <class Book>
 int book_at(const std::filesystem::path& path, const std::string& symbol, std::uint64_t time,
             std::size_t depth) {
   itchbook::BookAtT<Book> book(symbol, time, depth);
+  reserve_for_day(book);
   itchbook::parse_file(path, book);
   const auto locate = book.locate();
   if (!locate) {
@@ -208,6 +220,7 @@ int book_replay(const std::filesystem::path& path, const std::string& golden_pat
     book = std::move(w);
   }
 
+  reserve_for_day(*book);
   const auto start = std::chrono::steady_clock::now();
   itchbook::parse_file(path, *book);
   const double seconds =
