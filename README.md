@@ -3,7 +3,7 @@
 A C++20 parser and order book builder for NASDAQ TotalView-ITCH 5.0. It rebuilds the order book of every listed stock from a full trading day, and serves it to Python and over a REST API.
 
 - Full day (268.7M messages) replays with 0 errors in 82.6 s, 3.25M msg/s (v1, Apple M2). See [BENCHMARKS.md](BENCHMARKS.md).
-- v1 output is pinned by a golden file, `tests/golden/golden-v1.csv`.
+- v1 output is pinned by a golden file, `tests/golden/golden-v1.csv`. BookV2 reproduces it exactly, and matches v1 after every message of the day.
 
 ## Data
 
@@ -30,8 +30,11 @@ itchbook dump FILE --type A --limit 20               # decoded messages
 itchbook stats FILE                                  # data shape: types, top symbols, busiest second
 itchbook book FILE --symbol AAPL --at 10:30:00       # one stock's book at a time of day
 itchbook book FILE [--golden out.csv]                # full replay: errors, peak orders, crossed books
+itchbook diff FILE                                   # BookV1 vs BookV2 after every message
 itchbook parse FILE                                  # parse only, no book (for benchmarks)
 ```
+
+`book` and `diff` take `--book v1|v2|v2-std|v2-direct|v2-bsearch` (default `v2`), and `book` takes `--dispatch virtual|template`. BookV1 is the frozen v1 that produced the golden file; BookV2 is the Phase 4 book (flat hash map of orders, sorted-vector price levels with a level pool).
 
 ## Python
 
@@ -61,6 +64,7 @@ curl 'localhost:8000/stats'
 ```
 scripts/bench.sh [--cold] [--command book|parse|count]   # median of 5 full-day runs
 scripts/flamegraph.sh                                    # flame graph of a full-day replay
+scripts/measure_phase4.sh                                # every Phase 4 variant, each from its own commit
 ```
 
 Step-by-step notes are in `notes/`.

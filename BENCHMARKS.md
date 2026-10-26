@@ -16,6 +16,27 @@ Full-day replay of `12302019.NASDAQ_ITCH50`: 268,744,780 messages, 8.25 GB decom
 
 The `book` command used for this row runs a `CheckedBook`, which also checks for a locked or crossed book after every message. That check is about 1.6% of the instructions (`BookV1::state` in the cachegrind report), so the bare book is slightly faster than this row.
 
+## Phase 4: owed measurements
+
+Steps 9 to 12 are built and checked for correctness: every variant reproduces the golden file, and the final v2 matches v1 after every message of the full day (`itchbook diff`). They have **not been timed** on the full day yet. This Mac was under memory pressure (swap in use, about 19 GB compressed), the 8.25 GB day no longer stayed in the page cache, and full-day times were mostly disk reads.
+
+With memory freed (close heavy apps; the script warns if the file will not fit):
+
+```
+scripts/measure_phase4.sh            # every row below, each built from its own commit
+scripts/bench.sh --cold --command count    # Step 9 cold runs (and --command parse/book)
+scripts/flamegraph.sh data/12302019.NASDAQ_ITCH50 notes/flamegraph-v2.svg   # Step 12 task 5
+scripts/cachegrind.sh data/small.itch book  # Step 11 task 6, on v2 (v1 is in notes/cachegrind-v1.txt)
+python python/scripts/api_latency.py        # Step 12 task 6, now on BookV2
+```
+
+| Step | Rows owed |
+| --- | --- |
+| 9 | `ifstream` vs mmap for `count`, `parse`, `book`, warm and cold (preliminary 2 GB slice results in `notes/step-9.md`) |
+| 10 | BookV2 setup, `reserve`, FlatMap, direct array (decide FlatMap or direct from speed and peak memory) |
+| 11 | books by locate, sorted vectors with scan, with binary search (keep the faster), level pool, 12-byte orders; cachegrind v1 vs v2 |
+| 12 | virtual vs template dispatch, `-O2` / `-O3` / `-march=native` / LTO, final flame graph, API latency rerun; then tag `v2.0` |
+
 ## Where the time goes
 
 Same file, same binary, three commands (`scripts/bench.sh --command ...`, median of 5 warm runs):
